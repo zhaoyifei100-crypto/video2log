@@ -5,6 +5,7 @@ from .config import config
 from .logger import logger
 from .llm_client import LLMClient, get_llm_client
 from .capture_timer import CaptureTimer, main
+from .detector import BlackScreenDetector, DetectResult
 
 __all__ = [
     'config',
@@ -12,5 +13,7 @@ __all__ = [
     'LLMClient',
     'get_llm_client',
     'CaptureTimer',
-    'main'
+    'main',
+    'BlackScreenDetector',
+    'DetectResult'
 ]

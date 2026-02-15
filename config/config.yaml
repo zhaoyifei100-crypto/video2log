@@ -30,5 +30,14 @@ telegram:
 
 # 异常检测
 detection:
-  enabled: false
+  enabled: true
   notify_on_anomaly: true
+  # 黑屏检测配置
+  black_screen:
+    enabled: true
+    threshold: 30  # 亮度阈值 (0-255)，低于此值认为暗
+    dark_pixel_ratio: 0.9  # 暗像素比例阈值
+  # 闪断检测 (进阶)
+  flicker:
+    enabled: false
+    consecutive_frames: 3  # 连续多少帧黑屏判定为闪断

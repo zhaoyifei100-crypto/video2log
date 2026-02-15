@@ -4,10 +4,12 @@ import subprocess
 import cv2
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 
 from .config import config
 from .logger import logger
 from .llm_client import get_llm_client
+from .detector import BlackScreenDetector
 
 
 class CaptureTimer:
@@ -25,8 +27,24 @@ class CaptureTimer:
         self.running = False
         self.video_capture = None
         
+        # 黑屏检测初始化
+        detection_config = config.get('detection', {})
+        self.detection_enabled = detection_config.get('enabled', False)
+        
+        if self.detection_enabled:
+            black_screen_config = detection_config.get('black_screen', {})
+            self.black_screen_enabled = black_screen_config.get('enabled', True)
+            self.detector = BlackScreenDetector(
+                threshold=black_screen_config.get('threshold', 30),
+                dark_pixel_ratio=black_screen_config.get('dark_pixel_ratio', 0.9)
+            ) if self.black_screen_enabled else None
+        else:
+            self.black_screen_enabled = False
+            self.detector = None
+        
         logger.info(f"定时拍照初始化: 间隔={self.interval}秒, 输出目录={self.output_dir}")
         logger.info(f"输入源: {self.source_type}, 流地址: {self.stream_url}")
+        logger.info(f"黑屏检测: {'启用' if self.black_screen_enabled else '关闭'}")
     
     def _capture_from_stream(self) -> Path:
         """从网络流捕获帧"""
@@ -128,6 +146,30 @@ class CaptureTimer:
         except Exception as e:
             logger.error(f"Telegram 发送失败: {e}")
     
+    def detect_and_judge(self, image_path: Path) -> str:
+        """黑屏检测并判定
+        
+        Returns:
+            'PASS' - 正常
+            'FAIL' - 黑屏/闪断
+        """
+        if not self.black_screen_enabled or not self.detector:
+            return 'PASS'
+        
+        try:
+            result = self.detector.detect_from_file(str(image_path))
+            
+            if result.is_black:
+                logger.warning(f"⚠️ 黑屏检测: 亮度={result.avg_brightness:.1f}, 暗像素比例={result.black_ratio:.2%}")
+                return 'FAIL'
+            else:
+                logger.info(f"✓ 正常: 亮度={result.avg_brightness:.1f}")
+                return 'PASS'
+                
+        except Exception as e:
+            logger.error(f"黑屏检测失败: {e}")
+            return 'PASS'  # 检测失败默认为 PASS
+    
     def capture_and_describe(self):
         """拍照并描述"""
         logger.info("=" * 50)
@@ -139,14 +181,23 @@ class CaptureTimer:
                 image_path = self.capture_photo()
                 
                 if image_path:
-                    # LLM 描述
-                    description = self.describe_photo(image_path)
+                    # 黑屏检测
+                    judge_result = self.detect_and_judge(image_path)
                     
-                    if description:
-                        logger.info(f"描述: {description[:100]}...")
-                        
-                        # Telegram 发送
-                        self.send_to_telegram(image_path, description)
+                    # LLM 描述 (仅正常时)
+                    description = None
+                    if judge_result == 'PASS':
+                        description = self.describe_photo(image_path)
+                        if description:
+                            logger.info(f"描述: {description[:100]}...")
+                            # Telegram 发送
+                            self.send_to_telegram(image_path, description)
+                    else:
+                        logger.warning(f"❌ Link Test FAIL - 黑屏检测未通过")
+                        # 可选：FAIL 时也发送通知
+                        detection_config = config.get('detection', {})
+                        if detection_config.get('notify_on_anomaly'):
+                            self.send_to_telegram(image_path, "⚠️ Link Test FAIL - 黑屏")
                 
                 # 等待下一个周期
                 if self.running:
