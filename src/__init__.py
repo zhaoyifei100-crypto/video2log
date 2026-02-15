@@ -5,7 +5,7 @@ from .config import config
 from .logger import logger
 from .llm_client import LLMClient, get_llm_client
 from .capture_timer import CaptureTimer, main
-from .detector import BlackScreenDetector, DetectResult
+from .detector import BlackScreenDetector, ScreenDetectResult, MultiScreenResult
 
 __all__ = [
     'config',

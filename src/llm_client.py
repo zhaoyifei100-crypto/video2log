@@ -36,7 +36,7 @@ class LLMClient:
             logger.error(f"图像文件不存在: {image_path}")
             return None
         
-        if self.provider == 'openai':
+        if self.provider == 'openai' or self.provider == 'siliconflow':
             return self._describe_with_openai(image_path, prompt)
         elif self.provider == 'anthropic':
             return self._describe_with_anthropic(image_path, prompt)
