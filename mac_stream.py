@@ -12,7 +12,7 @@ import numpy as np
 import sys
 
 # 配置
-HOST = '0.0.0.0'          # 监听地址
+HOST = '192.168.1.15'          # 监听地址
 PORT = 8554               # 监听端口
 CAMERA_INDEX = 0          # 摄像头编号
 
@@ -57,8 +57,8 @@ def capture_loop():
     cap = cv2.VideoCapture(CAMERA_INDEX)
     
     # 设置分辨率和帧率
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 480)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
     cap.set(cv2.CAP_PROP_FPS, 30)
     
     if not cap.isOpened():
@@ -83,8 +83,8 @@ def main():
     
     # 启动 HTTP 服务器
     server = HTTPServer((HOST, PORT), MJPGHandler)
-    print(f"Stream server started: http://[本机IP]:{PORT}/stream")
-    print(f"在树莓派上用: ffplay http://[本机IP]:{PORT}/stream")
+    print(f"Stream server started: http://{HOST}:{PORT}/stream")
+    print(f"在树莓派上用: ffplay http://{HOST}:{PORT}/stream")
     
     try:
         server.serve_forever()
