@@ -14,51 +14,163 @@ description: |
 
 Nanobot 的眼睛 🐱
 
-## 两种模式
+---
+
+## 核心 Flow
+
+```
+用户请求
+    │
+    ▼
+┌─────────────────────────────────────────────┐
+│           1. 判定视觉模式                    │
+├─────────────────────────────────────────────┤
+│                                             │
+│   静态关键词: 描述/识别/这是什么/有什么/位置   │
+│   动态关键词: 检测/监控/盯着/黑屏/闪断/异常  │
+│                                             │
+└────────────────────┬────────────────────────┘
+                     │
+        ┌────────────┴────────────┐
+        ▼                         ▼
+   ┌─────────────┐          ┌─────────────┐
+   │  静态视觉   │          │  动态视觉   │
+   └──────┬──────┘          └──────┬──────┘
+          │                        │
+          ▼                        ▼
+   ┌─────────────┐          ┌─────────────┐
+   │ 直接调用    │          │  状态机     │
+   │ QwenVL     │          │  INIT      │
+   │            │          │    ↓       │
+   │            │          │  MONITOR   │
+   │            │          │    ↓       │
+   │            │          │  ALERT     │
+   └─────────────┘          └─────────────┘
+```
+
+---
+
+## 模式详解
 
 ### 静态视觉
-直接分析图片/视频帧，无需持续监控。
 
-**适用**: 描述画面、识别物体、OCR、定位
-
-**示例**:
-- "描述这张图"
-- "图中有几个人"
-- "找出电视屏幕位置"
-
-### 动态视觉
-持续监控，检测异常。
-
-**适用**: 黑屏检测、闪断检测、变化检测
+直接分析单帧图片，返回 LLM 描述。
 
 **流程**:
-1. 截取基准帧 → LLM 分析建立基准
-2. 持续监控 → CV 函数检测异常
-3. 异常时 → 通知用户
+```
+截取帧 → 缩放(1280px) → 编码(base64) → 调用 QwenVL → 返回描述
+```
 
-## CV 函数
+**使用**:
+```python
+from src.static_vision import StaticVision
 
-| 函数 | 说明 | 参数 |
+result = StaticVision().analyze(frame)
+# 返回: "图中有一个电视屏幕，显示..."
+```
+
+---
+
+### 动态视觉
+
+持续监控，检测异常。需要维护状态机。
+
+**状态机 Flow**:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         DYNAMIC VISION                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   ┌──────────┐                                                  │
+│   │   INIT   │  ← 第一次调用                                    │
+│   │  初始化   │    (1) 截取当前帧                               │
+│   └────┬─────┘    (2) 静态分析，建立基准                        │
+│        │         (3) 保存基准帧和基准描述                      │
+│        ▼         (4) 进入 MONITOR                              │
+│   ┌──────────┐                                                  │
+│   │ MONITOR  │  ← 持续监控                                      │
+│   │  监测中   │    (1) 执行 CV 函数 (亮度/边缘/帧差)            │
+│   └────┬─────┘    (2) 对比基准，判断是否异常                    │
+│        │         (3) 异常? → 进入 ALERT                        │
+│        │         (4) 正常 → 记录结果，继续监控                  │
+│        ▼                                                          │
+│   ┌──────────┐    异常触发    ┌──────────┐                      │
+│   │  ALERT   │ ────────────▶ │   DONE   │                      │
+│   │  通知用户 │               │  结束    │                      │
+│   └──────────┘               └──────────┘                      │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**状态存储**:
+- 内存: `skill.baseline_frame`, `skill.baseline_analysis`, `skill.cv_results`
+- 文件: `/tmp/vision_context.json` (可选，供 LLM 读取)
+
+**使用**:
+```python
+from src.dynamic_vision import DynamicVision
+
+skill = DynamicVision()
+
+# 第一次 (INIT)
+result = skill.process(frame)
+# 返回: "已建立基准：电视屏幕在画面中央，开始监控..."
+
+# 后续调用 (MONITOR)
+result = skill.process(frame)
+# 返回: "正常，画面亮度 80lux"
+
+# 异常时 (ALERT)
+result = skill.process(frame)  
+# 返回: "⚠️ 异常！亮度仅 10lux，可能黑屏"
+```
+
+---
+
+## CV 函数库
+
+这些函数在动态视觉的 MONITOR 阶段调用。
+
+| 函数 | 说明 | 返回 |
 |------|------|------|
-| `detect_brightness` | 亮度检测，判断黑屏 | threshold: 30 |
-| `detect_edges` | 边缘检测 | low: 50, high: 150 |
-| `find_contours` | 轮廓查找 | - |
-| `crop_region` | 裁剪区域 | x1, y1, x2, y2 |
-| `resize_frame` | 调整大小 | width: 1280 |
-| `calculate_histogram` | 直方图分析 | region: None |
+| `detect_brightness` | 亮度检测，判断黑屏 | `{"brightness": 80, "is_black": false}` |
+| `detect_edges` | Canny 边缘检测 | `{"edge_count": 150}` |
+| `find_contours` | 轮廓查找 | `{"contours": [[x,y,w,h], ...]}` |
+| `calc_frame_diff` | 与基准帧的差异 | `{"diff_percent": 5.2}` |
+| `detect_motion` | 运动检测 | `{"has_motion": true, "regions": [...]}` |
+| `crop_region` | 裁剪 ROI | 返回裁剪后的 frame |
+| `resize_frame` | 缩放 | 返回缩放后的 frame |
+
+---
 
 ## 使用方式
 
-```python
-# 静态模式
-from src.static_vision import StaticVision
-result = StaticVision().analyze(frame)
+### 命令行
 
-# 动态模式
-from src.dynamic_vision import DynamicVision
-skill = DynamicVision()
-result = skill.process(frame)  # 自动状态机: INIT → MONITOR → ALERT
+```bash
+# 静态模式 (单次)
+python main.py --mode static --once --input image.jpg
+
+# 动态模式 (持续监控)
+python main.py --mode dynamic --input rtsp://192.168.1.31:8554/mjpeg
 ```
+
+### 作为 Skill 调用
+
+```python
+from src import VisionSkill
+
+skill = VisionSkill()
+
+# 用户: "帮我看看这张图"
+result = skill.process(frame, mode="static")
+
+# 用户: "帮我盯着有没有黑屏"
+result = skill.process(frame, mode="dynamic")
+```
+
+---
 
 ## 配置
 
@@ -66,3 +178,13 @@ result = skill.process(frame)  # 自动状态机: INIT → MONITOR → ALERT
 - `SILICONFLOW_API_KEY`: LLM API 密钥
 
 配置文件: `config/config.yaml`
+
+---
+
+## 依赖
+
+```
+opencv-python
+requests
+pyyaml
+```
