@@ -1,0 +1,29 @@
+# 定时拍照 + LLM 描述
+interval: 60  # 拍照间隔（秒）
+output_dir: "photos"
+log_dir: "logs"
+
+# LLM 配置
+llm:
+  provider: "openai"  # openai / anthropic
+  api_key: "${OPENAI_API_KEY}"
+  model: "gpt-4o-mini"
+  base_url: "https://api.openai.com/v1"
+
+# 图像设置
+image:
+  format: "jpg"
+  quality: 85
+  width: 1280
+  height: 720
+
+# Telegram 可选
+telegram:
+  enabled: false
+  bot_token: "${TELEGRAM_BOT_TOKEN}"
+  chat_id: "${TELEGRAM_CHAT_ID}"
+
+# 异常检测
+detection:
+  enabled: false
+  notify_on_anomaly: true

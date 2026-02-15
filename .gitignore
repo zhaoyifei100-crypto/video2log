@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# 日志和输出
+logs/
+photos/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# 环境变量
+.env
+*.env
+
+# 系统
+.DS_Store
+Thumbs.db
