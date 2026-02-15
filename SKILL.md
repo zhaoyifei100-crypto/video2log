@@ -12,7 +12,23 @@ description: |
 
 # Vision Skill
 
-Nanobot 的眼睛 🐱
+> Nanobot 自己写的视觉技能 🐱
+
+---
+
+## 核心亮点
+
+**动态视觉中，LLM 会自己写 CV 代码进行监控！**
+
+```
+用户: "帮我盯着电视有没有黑屏"
+
+Nanobot:
+  1. 看一眼 → "电视在画面中央，显示正常"
+  2. 自己写一段 CV 代码 → "检测中心区域亮度，低于 30 就报警"
+  3. 循环执行这段代码监控
+  4. 异常时通知你
+```
 
 ---
 
@@ -42,6 +58,8 @@ Nanobot 的眼睛 🐱
    │ 直接调用    │          │  状态机     │
    │ QwenVL     │          │  INIT      │
    │            │          │    ↓       │
+   │            │          │  LLM生成代码│ ← 核心！
+   │            │          │    ↓       │
    │            │          │  MONITOR   │
    │            │          │    ↓       │
    │            │          │  ALERT     │
@@ -61,19 +79,9 @@ Nanobot 的眼睛 🐱
 截取帧 → 缩放(1280px) → 编码(base64) → 调用 QwenVL → 返回描述
 ```
 
-**使用**:
-```python
-from src.static_vision import StaticVision
-
-result = StaticVision().analyze(frame)
-# 返回: "图中有一个电视屏幕，显示..."
-```
-
 ---
 
-### 动态视觉
-
-持续监控，检测异常。需要维护状态机。
+### 动态视觉 (核心)
 
 **状态机 Flow**:
 
@@ -85,62 +93,60 @@ result = StaticVision().analyze(frame)
 │   ┌──────────┐                                                  │
 │   │   INIT   │  ← 第一次调用                                    │
 │   │  初始化   │    (1) 截取当前帧                               │
-│   └────┬─────┘    (2) 静态分析，建立基准                        │
-│        │         (3) 保存基准帧和基准描述                      │
-│        ▼         (4) 进入 MONITOR                              │
-│   ┌──────────┐                                                  │
-│   │ MONITOR  │  ← 持续监控                                      │
-│   │  监测中   │    (1) 执行 CV 函数 (亮度/边缘/帧差)            │
-│   └────┬─────┘    (2) 对比基准，判断是否异常                    │
-│        │         (3) 异常? → 进入 ALERT                        │
-│        │         (4) 正常 → 记录结果，继续监控                  │
+│   └────┬─────┘    (2) LLM 静态分析 + 生成监控代码             │
+│        │         (3) 进入 MONITOR                              │
 │        ▼                                                          │
+│   ┌──────────┐                                                  │
+│   │ MONITOR  │  ← 执行 LLM 生成的代码                          │
+│   │  监测中   │    (1) 用 exec() 执行代码                       │
+│   └────┬─────┘    (2) 判断结果是否异常                         │
+│        │         (3) 异常? → 进入 ALERT                        │
+│        ▼         (4) 正常 → 记录结果，继续监控                  │
 │   ┌──────────┐    异常触发    ┌──────────┐                      │
 │   │  ALERT   │ ────────────▶ │   DONE   │                      │
-│   │  通知用户 │               │  结束    │                      │
-│   └──────────┘               └──────────┘                      │
+│   │ LLM决策  │   (continue/  │  结束    │                      │
+│   │          │    adjust/    │          │                      │
+│   └──────────┘    stop)       └──────────┘                      │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**状态存储**:
-- 内存: `skill.baseline_frame`, `skill.baseline_analysis`, `skill.cv_results`
-- 文件: `/tmp/vision_context.json` (可选，供 LLM 读取)
+---
 
-**使用**:
-```python
-from src.dynamic_vision import DynamicVision
+## LLM 如何生成代码
 
-skill = DynamicVision()
+INIT 阶段，LLM 会收到：
 
-# 第一次 (INIT)
-result = skill.process(frame)
-# 返回: "已建立基准：电视屏幕在画面中央，开始监控..."
-
-# 后续调用 (MONITOR)
-result = skill.process(frame)
-# 返回: "正常，画面亮度 80lux"
-
-# 异常时 (ALERT)
-result = skill.process(frame)  
-# 返回: "⚠️ 异常！亮度仅 10lux，可能黑屏"
 ```
+1. 当前画面截图
+2. 可用的 CV 函数列表
+3. 要求生成监控代码
+
+LLM 返回:
+{
+  "description": "电视在画面中央，显示正常",
+  "code": "brightness = detect_brightness(frame); result = {'brightness': brightness, 'is_anomaly': brightness < 30}"
+}
+```
+
+然后 MONITOR 阶段用 `exec()` 执行这段代码！
 
 ---
 
 ## CV 函数库
 
-这些函数在动态视觉的 MONITOR 阶段调用。
+LLM 可以使用的函数：
 
 | 函数 | 说明 | 返回 |
 |------|------|------|
-| `detect_brightness` | 亮度检测，判断黑屏 | `{"brightness": 80, "is_black": false}` |
-| `detect_edges` | Canny 边缘检测 | `{"edge_count": 150}` |
-| `find_contours` | 轮廓查找 | `{"contours": [[x,y,w,h], ...]}` |
-| `calc_frame_diff` | 与基准帧的差异 | `{"diff_percent": 5.2}` |
-| `detect_motion` | 运动检测 | `{"has_motion": true, "regions": [...]}` |
-| `crop_region` | 裁剪 ROI | 返回裁剪后的 frame |
-| `resize_frame` | 缩放 | 返回缩放后的 frame |
+| `detect_brightness(frame)` | 亮度检测 | `80.5` |
+| `detect_dark_ratio(frame)` | 暗像素比例 | `0.02` |
+| `detect_motion(frame, prev_frame)` | 运动检测 | `1500.0` |
+| `detect_edges(frame)` | 边缘检测 | `{"edge_count": 150}` |
+| `compare_frame(frame1, frame2)` | 帧对比 | `{"diff_score": 5.2, "is_same": false}` |
+| `crop_region(frame, x1, y1, x2, y2)` | 裁剪区域 | frame |
+| `frame` | 当前帧 | numpy array |
+| `prev_frame` | 上一帧 | numpy array |
 
 ---
 
@@ -187,4 +193,5 @@ result = skill.process(frame, mode="dynamic")
 opencv-python
 requests
 pyyaml
+numpy
 ```
