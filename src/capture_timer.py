@@ -1,6 +1,7 @@
 """定时拍照循环模块"""
 import time
 import subprocess
+import cv2
 from pathlib import Path
 from datetime import datetime
 
@@ -17,18 +18,50 @@ class CaptureTimer:
         self.output_dir = Path(output_dir or config.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
+        self.source_type = config.get('source.type', 'local')
+        self.stream_url = config.get('source.stream_url', '')
+        
         self.llm_client = get_llm_client()
         self.running = False
+        self.video_capture = None
         
         logger.info(f"定时拍照初始化: 间隔={self.interval}秒, 输出目录={self.output_dir}")
+        logger.info(f"输入源: {self.source_type}, 流地址: {self.stream_url}")
     
-    def capture_photo(self, device: str = None) -> Path:
-        """使用 raspistill 或 fswebcam 拍照"""
+    def _capture_from_stream(self) -> Path:
+        """从网络流捕获帧"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"photo_{timestamp}.{config.image_config.get('format', 'jpg')}"
         filepath = self.output_dir / filename
         
-        # 尝试使用 raspistill (树莓派官方摄像头)
+        if self.video_capture is None or not self.video_capture.isOpened():
+            logger.info(f"打开网络流: {self.stream_url}")
+            self.video_capture = cv2.VideoCapture(self.stream_url)
+        
+        if not self.video_capture.isOpened():
+            logger.error(f"无法打开网络流: {self.stream_url}")
+            return None
+        
+        ret, frame = self.video_capture.read()
+        if not ret:
+            logger.error("从网络流读取帧失败")
+            return None
+        
+        cv2.imwrite(str(filepath), frame)
+        logger.info(f"从网络流捕获成功: {filepath}")
+        return filepath
+    
+    def capture_photo(self, device: str = None) -> Path:
+        """拍照 - 支持本地摄像头或网络流"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"photo_{timestamp}.{config.image_config.get('format', 'jpg')}"
+        filepath = self.output_dir / filename
+        
+        # 网络流模式
+        if self.source_type == 'stream' and self.stream_url:
+            return self._capture_from_stream()
+        
+        # 本地摄像头模式 (raspistill / fswebcam)
         cmd = [
             'raspistill',
             '-o', str(filepath),
@@ -37,7 +70,6 @@ class CaptureTimer:
             '-q', str(config.image_config.get('quality', 85))
         ]
         
-        # 如果没有指定设备，尝试自动选择
         if device:
             cmd = ['fswebcam', '-r', f"{config.image_config.get('width', 1280)}x{config.image_config.get('height', 720)}", str(filepath)]
         
@@ -127,6 +159,10 @@ class CaptureTimer:
             except Exception as e:
                 logger.error(f"拍照循环异常: {e}")
                 time.sleep(5)  # 出错后等待5秒再重试
+        
+        # 清理资源
+        if self.video_capture:
+            self.video_capture.release()
         
         logger.info("拍照循环已停止")
     
