@@ -82,10 +82,34 @@ source:
 |------|------|
 | `detection.black_screen.threshold` | 亮度阈值，低于此值认为暗 (默认30) |
 | `detection.black_screen.dark_pixel_ratio` | 暗像素比例阈值 (默认0.9) |
+| `detection.black_screen.auto_detect_screens` | 用 Qwen 自动检测屏幕边界 (默认true) |
 
 检测结果:
-- **PASS** - 亮度正常
-- **FAIL** - 黑屏/闪断
+- **PASS** - 所有屏幕亮度正常
+- **FAIL** - 任意屏幕黑屏
+
+### 多屏幕检测
+
+自动模式 (默认):
+```yaml
+detection:
+  black_screen:
+    enabled: true
+    auto_detect_screens: true  # 调用 Qwen 识别屏幕边界
+```
+
+手动指定区域:
+```yaml
+detection:
+  black_screen:
+    enabled: true
+    auto_detect_screens: false
+    manual_regions:
+      - name: "TV1"
+        x1: 100, y1: 50, x2: 600, y2: 400
+      - name: "TV2"
+        x1: 700, y1: 50, x2: 1200, y2: 400
+```
 
 ## 项目结构
 
@@ -96,6 +120,7 @@ video2log/
 │   ├── config.py        # 配置加载
 │   ├── logger.py        # 日志
 │   ├── llm_client.py    # LLM API
+│   ├── screen_detector.py  # 屏幕边界检测 (Qwen)
 │   ├── detector.py      # 黑屏检测
 │   └── capture_timer.py # 定时拍照
 ├── config/

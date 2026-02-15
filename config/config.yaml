@@ -37,6 +37,14 @@ detection:
     enabled: true
     threshold: 30  # 亮度阈值 (0-255)，低于此值认为暗
     dark_pixel_ratio: 0.9  # 暗像素比例阈值
+    # 屏幕检测配置
+    auto_detect_screens: true  # 用 Qwen 自动检测屏幕边界
+    # 手动指定屏幕区域 (与 auto_detect_screens 二选一)
+    # manual_regions:
+    #   - name: "TV1"
+    #     x1: 100, y1: 50, x2: 600, y2: 400
+    #   - name: "TV2"
+    #     x1: 700, y1: 50, x2: 1200, y2: 400
   # 闪断检测 (进阶)
   flicker:
     enabled: false

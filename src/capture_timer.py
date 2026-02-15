@@ -34,10 +34,16 @@ class CaptureTimer:
         if self.detection_enabled:
             black_screen_config = detection_config.get('black_screen', {})
             self.black_screen_enabled = black_screen_config.get('enabled', True)
-            self.detector = BlackScreenDetector(
-                threshold=black_screen_config.get('threshold', 30),
-                dark_pixel_ratio=black_screen_config.get('dark_pixel_ratio', 0.9)
-            ) if self.black_screen_enabled else None
+            
+            if self.black_screen_enabled:
+                self.detector = BlackScreenDetector(
+                    threshold=black_screen_config.get('threshold', 30),
+                    dark_pixel_ratio=black_screen_config.get('dark_pixel_ratio', 0.9),
+                    auto_detect_screens=black_screen_config.get('auto_detect_screens', True),
+                    manual_regions=black_screen_config.get('manual_regions', [])
+                )
+            else:
+                self.detector = None
         else:
             self.black_screen_enabled = False
             self.detector = None
@@ -150,8 +156,8 @@ class CaptureTimer:
         """黑屏检测并判定
         
         Returns:
-            'PASS' - 正常
-            'FAIL' - 黑屏/闪断
+            'PASS' - 所有屏幕正常
+            'FAIL' - 任意屏幕黑屏/闪断
         """
         if not self.black_screen_enabled or not self.detector:
             return 'PASS'
@@ -159,11 +165,18 @@ class CaptureTimer:
         try:
             result = self.detector.detect_from_file(str(image_path))
             
-            if result.is_black:
-                logger.warning(f"⚠️ 黑屏检测: 亮度={result.avg_brightness:.1f}, 暗像素比例={result.black_ratio:.2%}")
+            if not result.all_pass:
+                # 有屏幕黑屏
+                fail_screens = [r.name for r in result.results if r.is_black]
+                logger.warning(f"⚠️ Link Test FAIL: {', '.join(fail_screens)} 黑屏")
+                for r in result.results:
+                    status = "❌ 黑屏" if r.is_black else "✅ 正常"
+                    logger.warning(f"  {r.name}: {status} (亮度={r.avg_brightness:.1f})")
                 return 'FAIL'
             else:
-                logger.info(f"✓ 正常: 亮度={result.avg_brightness:.1f}")
+                # 全部正常
+                summary = result.summary()
+                logger.info(f"✓ Link Test PASS: {summary}")
                 return 'PASS'
                 
         except Exception as e:
