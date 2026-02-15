@@ -21,6 +21,8 @@ def main():
                         help='抓取间隔(秒)')
     parser.add_argument('--stream', type=str, default=None,
                         help='视频流地址')
+    parser.add_argument('--input', type=str, default=None,
+                        help='本地图片路径 (静态模式用)')
     parser.add_argument('--output', type=str, default=None,
                         help='输出目录')
     parser.add_argument('--once', action='store_true',
@@ -41,7 +43,23 @@ def main():
         output_dir=args.output
     )
     
-    if args.once:
+    # 支持本地图片输入
+    if args.input:
+        import cv2
+        frame = cv2.imread(args.input)
+        if frame is None:
+            print(f"无法读取图片: {args.input}")
+            return
+        # 直接处理
+        if processor.mode == VisionMode.STATIC:
+            # 保存图片路径
+            processor.output_dir = Path(args.input).parent
+            result = processor.process_frame(frame)
+        else:
+            # 动态模式需要视频流，暂不支持本地图片
+            print("动态模式暂不支持本地图片，请用 --stream")
+            return
+    elif args.once:
         # 运行一次
         logger.info(f"模式: {processor.mode.value}, 间隔: {processor.interval}s")
         result = processor.process_once()
