@@ -112,23 +112,17 @@ CV 检测器（{detector_name}）报告了可疑情况，检测到画面内容�
         if baseline_path and os.path.exists(baseline_path):
             try:
                 base64_baseline = self._encode_image(baseline_path)
-                # 插入到当前图片之前
+                # 明确标注基准图和当前图
                 messages[0]["content"].extend(
                     [
-                        {
-                            "type": "text",
-                            "text": "下面是监控开始时的基准图片（参考用）：",
-                        },
+                        {"type": "text", "text": "### [图1: 基准图 - 正常状态参考]"},
                         {
                             "type": "image_url",
                             "image_url": {
                                 "url": f"data:image/jpeg;base64,{base64_baseline}"
                             },
                         },
-                        {
-                            "type": "text",
-                            "text": "下面是当前检测到可疑情况的图片（请基于此图判断）：",
-                        },
+                        {"type": "text", "text": "### [图2: 当前图 - 疑似异常状态]"},
                     ]
                 )
             except Exception as e:
@@ -438,7 +432,7 @@ class VideoMonitor:
                             f"   VLLM 确认结果: {'异常' if vllm_result['is_confirmed_anomaly'] else '正常'}"
                         )
                         print(f"   置信度: {vllm_result['confidence']:.2f}")
-                        print(f"   原因: {vllm_result['reason'][:100]}...")
+                        print(f"   原因: {vllm_result['reason']}")
 
                         # 记录到日志
                         self.monitor_logger.log_detection(

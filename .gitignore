@@ -36,3 +36,4 @@ htmlcov/
 tests/*
 monitor_output/*
 monitor_config.json
+VISION_ALERT.md
