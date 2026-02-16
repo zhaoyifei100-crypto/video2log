@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mac 摄像头推流脚本
+Mac 摄像头推流到nanobot
 使用 HTTP MJPG 格式，方便 OpenCV 读取
 """
 
@@ -14,6 +14,9 @@ import sys
 # 配置
 HOST = '192.168.1.15'          # 监听地址
 PORT = 8554               # 监听端口
+
+#apple camera_index may not be 0
+#   0 may be your iphone camera, 1 may be your macbook camera
 CAMERA_INDEX = 0          # 摄像头编号
 
 # 全局帧

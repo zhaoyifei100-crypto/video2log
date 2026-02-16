@@ -187,7 +187,15 @@ print('监控配置已保存')
 """)
 ```
 
-**1.4** 启动后台监控脚本：
+**1.4** 预检查 monitor 能否正常运行（防止启动后直接挂掉）：
+```python
+exec("python3 monitor.py --config monitor_config.json --dry-run")
+```
+- 执行一次完整的检测流程（截图 → CV 检测）
+- 验证配置正确、依赖可用
+- **必须成功才能继续**，否则报告错误并让用户调整
+
+**1.5** 预检查通过后，启动后台监控脚本：
 ```python
 spawn(
     command="python3 monitor.py --config monitor_config.json",
@@ -195,7 +203,7 @@ spawn(
 )
 ```
 
-**1.5** 创建定期检查任务：
+**1.6** 创建定期检查任务：
 ```python
 cron(
     action="add",
@@ -204,7 +212,7 @@ cron(
 )
 ```
 
-**1.6** 向用户报告监控已启动：
+**1.7** 向用户报告监控已启动：
 ```
 ✅ 已开始监控电视画面
 - 检查间隔: 5秒

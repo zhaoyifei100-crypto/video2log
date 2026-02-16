@@ -403,6 +403,9 @@ class VideoMonitor:
 def main():
     parser = argparse.ArgumentParser(description="Video2Log Monitor - 独立监控脚本")
     parser.add_argument("--config", type=str, required=True, help="配置文件路径 (JSON)")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="只运行一次检测并退出（用于预检查）"
+    )
 
     args = parser.parse_args()
 
@@ -417,6 +420,29 @@ def main():
 
     # 启动监控
     monitor = VideoMonitor(config)
+
+    if args.dry_run:
+        # 预检查模式：只运行一次
+        print("🧪 Dry Run 模式：执行一次检测并退出\n")
+
+        # 1. 截图
+        frame = monitor.capture_frame()
+        if frame is None:
+            print("❌ 预检查失败：无法获取画面")
+            sys.exit(1)
+
+        print(f"✅ 截图成功，帧大小: {frame.shape}")
+
+        # 2. CV 检测
+        cv_result = monitor.detect_suspicious(frame)
+        print(f"✅ CV 检测成功: {cv_result}")
+
+        # 3. 尝试 VLLM 连接（可选，跳过以加快速度）
+        # vllm_result = monitor.vllm.confirm_anomaly(...)
+
+        print("\n✅ 预检查通过，monitor 可正常启动")
+        sys.exit(0)
+
     monitor.run()
 
 
