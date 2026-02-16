@@ -64,6 +64,13 @@ class BlackScreenDetector(BaseDetector):
                 frame = frame[y1:y2, x1:x2]
 
         # 转灰度
+        if frame is None or frame.size == 0:
+            return DetectionResult(
+                is_suspicious=False,
+                confidence=0.0,
+                description="无效帧",
+                metadata={},
+            )
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         # 降噪（避免噪点干扰 Laplacian）

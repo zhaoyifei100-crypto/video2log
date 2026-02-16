@@ -33,11 +33,13 @@ from src.logger import logger
 class VLLMClient:
     """独立的 VLLM 客户端 - 用于异常确认"""
 
-    def __init__(self, config: Dict[str, Any]):
-        self.provider = config.get("provider", "siliconflow")
-        self.api_key = config.get("api_key")
-        self.model = config.get("model", "Qwen/Qwen2.5-VL-72B-Instruct")
-        self.base_url = config.get("base_url", "https://api.siliconflow.cn/v1")
+    def __init__(self, full_config: Dict[str, Any]):
+        self.config = full_config
+        vllm_config = full_config.get("vllm", {})
+        self.provider = vllm_config.get("provider", "siliconflow")
+        self.api_key = vllm_config.get("api_key")
+        self.model = vllm_config.get("model", "Qwen/Qwen2.5-VL-72B-Instruct")
+        self.base_url = vllm_config.get("base_url", "https://api.siliconflow.cn/v1")
 
         if not self.api_key:
             raise ValueError("VLLM API key 未配置")
@@ -59,27 +61,36 @@ class VLLMClient:
         """
         base64_image = self._encode_image(image_path)
 
-        # 构建确认 Prompt
-        # 增加背景信息，告知 VLLM 用户的具体监控目标
-        prompt = f"""你是一位专业的视觉分析师。
+        # 优先使用配置中的自定义 Prompt
+        vllm_prompt = self.config.get("vllm_prompt")
+
+        if vllm_prompt:
+            # 使用 Main LLM 提供的定制化 Prompt
+            # 替换占位符（如果存在）
+            prompt = (
+                vllm_prompt.replace("{user_goal}", user_goal)
+                .replace("{detector_name}", detector_name)
+                .replace("{cv_result}", json.dumps(cv_result, ensure_ascii=False))
+            )
+        else:
+            # 兜底 Prompt
+            prompt = f"""你是一位专业的视觉分析师。
 用户的监控目标是："{user_goal}"
 
-CV 检测器（{detector_name}）报告了可疑情况，检测到画面亮度或内容发生了显著变化：
+CV 检测器（{detector_name}）报告了可疑情况，检测到画面内容发生了变化：
 {json.dumps(cv_result, indent=2, ensure_ascii=False)}
 
-请仔细观察图片，判断：
-1. 画面中的主体设备（如 iPad、电视或显示器）是否确实处于“关闭”、“黑屏”或“内容消失”的状态？
-2. 如果设备确实从开启变为关闭了（或者从亮屏变黑屏了），即使环境光线（如窗户光、日光灯）依然很亮，你也必须判定为异常，并返回 is_confirmed_anomaly: true。
-3. 只有当画面完全没有变化，或者设备屏幕依然亮着时，才判定为误报。
-
-注意：我们要捕捉的是“设备关闭”这个事件。
+请仔细观察图片，结合用户的监控目标判断：
+1. 画面中是否发生了符合用户目标的“异常事件”或“状态变化”？
+2. 如果确实符合用户目标，返回 is_confirmed_anomaly: true。
+3. 如果只是无关的干扰或不符合目标的变化，返回 is_confirmed_anomaly: false。
 
 返回格式（JSON）：
 ```json
 {{
   "is_confirmed_anomaly": true/false,
   "confidence": 0.0-1.0,
-  "reason": "详细说明你看到的设备屏幕状态（亮着还是熄灭了）"
+  "reason": "详细说明你看到的实际情况以及为什么符合或不符合用户目标"
 }}
 ```"""
 
@@ -88,22 +99,52 @@ CV 检测器（{detector_name}）报告了可疑情况，检测到画面亮度�
             "Authorization": f"Bearer {self.api_key}",
         }
 
-        payload = {
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
+        # 构建多图消息内容
+        messages = [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": prompt}],
+            }
+        ]
+
+        # 如果有基准图，也发给 VLLM 进行对比
+        baseline_path = self.config.get("baseline_image")
+        if baseline_path and os.path.exists(baseline_path):
+            try:
+                base64_baseline = self._encode_image(baseline_path)
+                # 插入到当前图片之前
+                messages[0]["content"].extend(
+                    [
+                        {
+                            "type": "text",
+                            "text": "下面是监控开始时的基准图片（参考用）：",
+                        },
                         {
                             "type": "image_url",
                             "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
+                                "url": f"data:image/jpeg;base64,{base64_baseline}"
                             },
                         },
-                    ],
-                }
-            ],
+                        {
+                            "type": "text",
+                            "text": "下面是当前检测到可疑情况的图片（请基于此图判断）：",
+                        },
+                    ]
+                )
+            except Exception as e:
+                logger.warning(f"无法加载基准图发给 VLLM: {e}")
+
+        # 添加当前可疑图片
+        messages[0]["content"].append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"},
+            }
+        )
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
             "max_tokens": 500,
         }
 
@@ -198,8 +239,7 @@ class VideoMonitor:
                 print(f"   ⚠️ 无法加载基准图: {self.baseline_image_path}")
 
         # VLLM 客户端
-        vllm_config = config.get("vllm", {})
-        self.vllm = VLLMClient(vllm_config)
+        self.vllm = VLLMClient(config)
 
         # 日志记录器
         self.monitor_logger = MonitorLogger(self.output_dir / "monitor_logs.jsonl")
@@ -244,13 +284,18 @@ class VideoMonitor:
                     # 否则作为字符串（URL 或文件路径）
                     capture_source = self.stream_url
                 self.video_capture = cv2.VideoCapture(capture_source)
+                # 设置分辨率，避免不同设备差异
+                self.video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                self.video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
             if not self.video_capture.isOpened():
                 print(f"无法打开视频流: {self.stream_url}", file=sys.stderr)
                 return None
 
             ret, frame = self.video_capture.read()
-            return frame if ret else None
+            if not ret or frame is None or frame.size == 0:
+                return None
+            return frame
 
     def save_frame(self, frame: np.ndarray, prefix: str) -> Path:
         """保存帧"""

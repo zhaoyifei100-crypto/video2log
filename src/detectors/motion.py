@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 from typing import Optional, List, Dict, Any
 from .base import BaseDetector, DetectionResult, normalize_region
+from ..logger import logger
 
 
 class MotionDetector(BaseDetector):
@@ -33,7 +34,7 @@ class MotionDetector(BaseDetector):
     [/LLM_DESC]
     """
 
-    DEFAULT_PARAMS = {"sensitivity": 5000, "min_area": 500, "region": None}
+    DEFAULT_PARAMS = {"sensitivity": 20000, "min_area": 2000, "region": None}
 
     def __init__(self, params=None):
         super().__init__(params)
@@ -56,6 +57,13 @@ class MotionDetector(BaseDetector):
                 frame = frame[y1:y2, x1:x2]
 
         # 转灰度
+        if frame is None or frame.size == 0:
+            return DetectionResult(
+                is_suspicious=False,
+                confidence=0.0,
+                description="无效帧",
+                metadata={},
+            )
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         # 高斯模糊减少噪声
@@ -72,6 +80,18 @@ class MotionDetector(BaseDetector):
             )
 
         # 帧差
+        if self.prev_gray.shape != gray.shape:
+            logger.warning(
+                f"MotionDetector: 帧大小不一致 ({self.prev_gray.shape} vs {gray.shape})，重置基准"
+            )
+            self.prev_gray = gray
+            return DetectionResult(
+                is_suspicious=False,
+                confidence=0.0,
+                description="帧大小变化，已重置基准",
+                metadata={"motion_score": 0, "areas": []},
+            )
+
         frame_delta = cv2.absdiff(self.prev_gray, gray)
         thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
 

@@ -160,27 +160,30 @@ class VisionProcessor:
         # 获取检测器菜单
         detector_menu = build_llm_menu()
 
-        # 调用 LLM 识别屏幕区域
-        # Main Agent 固定使用 black_screen 检测器
-        prompt = f"""你是一个视觉监控系统。需要监控 iPad 屏幕是否关闭。
+        # 调用 LLM 分析画面并生成监控方案
+        prompt = f"""你是一个视觉监控系统初始化专家。用户的监控目标是："{self.user_prompt}"
 
 画面尺寸：640x480 像素
 
-请分析这张图片：
+请分析这张初始图片，并制定监控方案：
 1. 描述画面内容
-2. 识别 iPad 屏幕在画面中的位置，返回归一化边界框坐标 [x1, y1, x2, y2]
+2. 识别监控主体（如 iPad 屏幕、人、门口等）在画面中的位置，返回归一化边界框坐标 [x1, y1, x2, y2]
+3. 从以下检测器菜单中选择最合适的一个：
+{detector_menu}
+4. 制定“VLLM 二次确认逻辑”：当 CV 检测器发现可疑变化时，VLLM 应该如何判断？请编写一段给 VLLM 的指令（vllm_prompt）。
 
 坐标说明：
 - 使用归一化坐标 (0.0-1.0)，相对于画面尺寸的比例
 - x1, y1 是左上角，x2, y2 是右下角
-- 例如: [0.3, 0.2, 0.7, 0.8] 表示画面中间区域
 
 返回格式（纯 JSON，不要注释）：
 ```json
 {{
-  "description": "画面描述",
-  "screen_region": [0.25, 0.3, 0.75, 0.7],
-  "confidence": 0.95
+  "description": "画面内容描述",
+  "monitor_region": [x1, y1, x2, y2],
+  "detector": "检测器名称",
+  "params": {{ "检测器参数" }},
+  "vllm_prompt": "你是一位视觉分析师。用户的目标是：{user_goal}。CV检测器({detector_name})发现了可疑变化：{cv_result}。请对比基准图和当前图，判断是否发生了..."
 }}
 ```"""
 
@@ -189,65 +192,46 @@ class VisionProcessor:
 
             # 解析 JSON
             import re
-
-            # 首先尝试从 ```json 代码块中提取
+            json_str = None
             json_block_match = re.search(r"```json\s*\n(.*?)\n```", response, re.DOTALL)
             if json_block_match:
                 json_str = json_block_match.group(1)
             else:
-                # 如果没有代码块，尝试从文本中提取最外层 JSON
                 json_match = re.search(r"\{[\s\S]*?\}", response)
                 if json_match:
                     json_str = json_match.group()
-                else:
-                    json_str = None
 
             if json_str:
                 data = json.loads(json_str)
                 result.llm_response = data.get("description", "")
 
-                # Main Agent 固定使用 black_screen 检测器
-                # LLM 只负责识别屏幕区域
-                screen_region = data.get("screen_region")
-                confidence = data.get("confidence", 0.5)
-
-                # 构建检测器参数 - 使用相对亮度变化检测
-                detector_params = {
-                    "brightness_drop": 0.5,  # 亮度下降 50% 视为黑屏
-                    "dark_ratio": 0.8,
-                }
-
-                # 如果 LLM 识别了屏幕区域且置信度足够，使用它
-                if screen_region and len(screen_region) == 4 and confidence > 0.7:
-                    detector_params["region"] = screen_region
-                    logger.info(
-                        f"LLM 识别屏幕区域: {screen_region}, 置信度: {confidence}"
-                    )
-                else:
-                    logger.warning(
-                        f"LLM 未识别到屏幕区域或置信度低: {screen_region}, confidence={confidence}"
-                    )
+                detector_name = data.get("detector", "black_screen")
+                detector_params = data.get("params", {})
+                
+                # 如果有 region 且没有在 params 中设置，则设置它
+                if "region" not in detector_params and "monitor_region" in data:
+                    detector_params["region"] = data["monitor_region"]
 
                 result.detector_config = {
-                    "detector": "black_screen",
+                    "detector": detector_name,
                     "params": detector_params,
+                    "vllm_prompt": data.get("vllm_prompt")
                 }
 
                 # 保存到上下文
                 self.context.baseline_description = result.llm_response
-                self.context.detector_name = "black_screen"
+                self.context.detector_name = detector_name
                 self.context.detector_params = detector_params
+                # 扩展上下文以存储 vllm_prompt
+                self.context.vllm_prompt = data.get("vllm_prompt")
 
                 # 初始化检测器
-                self.detector = get_detector("black_screen", detector_params)
+                self.detector = get_detector(detector_name, detector_params)
 
-                logger.info(f"INIT 完成: {result.llm_response[:100]}")
-                logger.info(f"检测器: black_screen (Main Agent 选择)")
-                logger.info(f"参数: {detector_params}")
+                logger.info(f"INIT 完成: {detector_name}, params={detector_params}")
             else:
                 logger.error("无法从 LLM 响应中解析 JSON")
-                # 默认使用黑屏检测
-                self.context.detector_name = "black_screen"
+                # 默认回退
                 self.detector = get_detector("black_screen", {})
 
         except Exception as e:

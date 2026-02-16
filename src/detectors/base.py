@@ -53,11 +53,23 @@ def normalize_region(
     x2_px = max(0, min(x2_px, frame_width))
     y2_px = max(0, min(y2_px, frame_height))
 
-    # 确保 x1 < x2, y1 < y2
+    # 确保 x1 <= x2, y1 <= y2
     if x1_px > x2_px:
         x1_px, x2_px = x2_px, x1_px
     if y1_px > y2_px:
         y1_px, y2_px = y2_px, y1_px
+
+    # 确保至少有 1 像素宽度/高度
+    if x1_px == x2_px:
+        if x1_px > 0:
+            x1_px -= 1
+        elif x2_px < frame_width:
+            x2_px += 1
+    if y1_px == y2_px:
+        if y1_px > 0:
+            y1_px -= 1
+        elif y2_px < frame_height:
+            y2_px += 1
 
     return (x1_px, y1_px, x2_px, y2_px)
 
