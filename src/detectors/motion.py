@@ -1,12 +1,11 @@
 """
-运动检测器
-检测画面运动、物体移动
-支持归一化区域坐标
+运动检测器 - 简单全局变化检测
+计算画面中发生变化的像素占比，适合作为通用的运动/变化模版
 """
 
 import cv2
 import numpy as np
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 from .base import BaseDetector, DetectionResult, normalize_region
 from ..logger import logger
 
@@ -14,27 +13,24 @@ from ..logger import logger
 class MotionDetector(BaseDetector):
     """
     [LLM_DESC]
-    能力：检测画面运动、物体移动、有人出现
+    能力：检测画面中的运动、物体移动或任何显著变化
+    原理：计算前后两帧之间发生变化的像素占总像素的比例 (change_ratio)
     场景：
-      - 有人进入监控区域
-      - 物体被移动
-      - 画面内容发生变化
-      - 摄像头被触碰导致抖动
+      - 检测是否有人进入房间
+      - 检测屏幕内容是否发生了跳转或切换
+      - 检测摄像头是否被移动
     参数：
-      - sensitivity: 灵敏度 (1000-50000, 默认5000)
-        说明：帧差值超过此值视为运动
-      - min_area: 最小运动区域面积 (默认500)
-        说明：过滤小的噪声变化
+      - threshold: 变化比例阈值 (0.0-1.0, 默认0.05)
+        说明：画面中超过此比例的像素发生变化时触发警报
+        示例：0.05 表示画面 5% 发生变化即报警
       - region: 检测区域 [x1, y1, x2, y2] (可选)
-        说明：只检测画面中的特定区域。使用归一化坐标(0.0-1.0)
-        示例: [0.3, 0.2, 0.7, 0.8] 表示画面中间区域
+        说明：只检测特定区域的变化。使用归一化坐标(0.0-1.0)
     输出：
-      - motion_score: 运动得分（帧差值）
-      - motion_areas: 运动区域数量和位置
+      - change_ratio: 变化像素占比
     [/LLM_DESC]
     """
 
-    DEFAULT_PARAMS = {"sensitivity": 20000, "min_area": 2000, "region": None}
+    DEFAULT_PARAMS = {"threshold": 0.05, "region": None}
 
     def __init__(self, params=None):
         super().__init__(params)
@@ -44,11 +40,12 @@ class MotionDetector(BaseDetector):
         self, frame: np.ndarray, prev_frame: Optional[np.ndarray] = None
     ) -> DetectionResult:
         # 获取参数
-        sensitivity = self.params.get("sensitivity", self.DEFAULT_PARAMS["sensitivity"])
-        min_area = self.params.get("min_area", self.DEFAULT_PARAMS["min_area"])
+        threshold = float(
+            self.params.get("threshold", self.DEFAULT_PARAMS["threshold"])
+        )
         region = self.params.get("region", self.DEFAULT_PARAMS["region"])
 
-        # 裁剪区域（如果指定）- 支持归一化坐标
+        # 裁剪区域
         if region and len(region) == 4:
             h, w = frame.shape[:2]
             coords = normalize_region(region, h, w)
@@ -56,7 +53,6 @@ class MotionDetector(BaseDetector):
                 x1, y1, x2, y2 = coords
                 frame = frame[y1:y2, x1:x2]
 
-        # 转灰度
         if frame is None or frame.size == 0:
             return DetectionResult(
                 is_suspicious=False,
@@ -64,22 +60,22 @@ class MotionDetector(BaseDetector):
                 description="无效帧",
                 metadata={},
             )
+
+        # 转灰度并轻微模糊以去噪
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (7, 7), 0)
 
-        # 高斯模糊减少噪声
-        gray = cv2.GaussianBlur(gray, (21, 21), 0)
-
-        # 第一帧初始化
+        # 初始化基准
         if self.prev_gray is None:
             self.prev_gray = gray
             return DetectionResult(
                 is_suspicious=False,
                 confidence=0.0,
-                description="初始化完成，等待下一帧",
-                metadata={"motion_score": 0, "areas": []},
+                description="初始化第一帧",
+                metadata={"change_ratio": 0.0},
             )
 
-        # 帧差
+        # 尺寸检查
         if self.prev_gray.shape != gray.shape:
             logger.warning(
                 f"MotionDetector: 帧大小不一致 ({self.prev_gray.shape} vs {gray.shape})，重置基准"
@@ -88,48 +84,30 @@ class MotionDetector(BaseDetector):
             return DetectionResult(
                 is_suspicious=False,
                 confidence=0.0,
-                description="帧大小变化，已重置基准",
-                metadata={"motion_score": 0, "areas": []},
+                description="帧尺寸变更，重置基准",
+                metadata={"change_ratio": 0.0},
             )
 
+        # 计算帧差
         frame_delta = cv2.absdiff(self.prev_gray, gray)
+        # 二值化：差异超过 25 的像素视为变化
         thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
 
-        # 膨胀处理
-        kernel = np.ones((5, 5), np.uint8)
-        thresh = cv2.dilate(thresh, kernel, iterations=2)
-
-        # 找轮廓
-        contours, _ = cv2.findContours(
-            thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-
-        # 过滤小区域
-        motion_areas = []
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if area > min_area:
-                x, y, w, h = cv2.boundingRect(contour)
-                motion_areas.append({"x": x, "y": y, "w": w, "h": h, "area": area})
-
-        # 计算运动得分
-        motion_score = int(np.sum(frame_delta))
+        # 计算变化像素占比
+        change_count = np.count_nonzero(thresh)
+        change_ratio = float(change_count) / gray.size
 
         # 更新前一帧
         self.prev_gray = gray.copy()
 
-        # 判断是否可疑
-        is_suspicious = motion_score > sensitivity or len(motion_areas) > 0
+        # 判断是否超过阈值
+        is_suspicious = change_ratio >= threshold
 
-        # 计算置信度
         if is_suspicious:
-            confidence = min(motion_score / (sensitivity * 2), 1.0)
-            if len(motion_areas) > 0:
-                reason = (
-                    f"检测到 {len(motion_areas)} 个运动区域，运动得分 {motion_score}"
-                )
-            else:
-                reason = f"运动得分 {motion_score} > {sensitivity}"
+            confidence = min(change_ratio / (threshold * 2), 1.0)
+            reason = (
+                f"检测到画面变化: 变化比例 {change_ratio:.1%} (阈值 {threshold:.1%})"
+            )
         else:
             confidence = 0.0
             reason = None
@@ -137,12 +115,11 @@ class MotionDetector(BaseDetector):
         return DetectionResult(
             is_suspicious=is_suspicious,
             confidence=confidence,
-            description=f"运动得分: {motion_score}, 检测区域数: {len(motion_areas)}",
+            description=f"画面变化比例: {change_ratio:.1%}",
             metadata={
-                "motion_score": motion_score,
-                "sensitivity": sensitivity,
-                "areas": motion_areas,
-                "area_count": len(motion_areas),
+                "change_ratio": change_ratio,
+                "threshold": threshold,
+                "change_pixel_count": int(change_count),
             },
             alert_reason=reason,
         )
