@@ -48,42 +48,38 @@ class VLLMClient:
             return base64.b64encode(f.read()).decode("utf-8")
 
     def confirm_anomaly(
-        self, image_path: str, detector_name: str, cv_result: Dict[str, Any]
+        self,
+        image_path: str,
+        detector_name: str,
+        cv_result: Dict[str, Any],
+        user_goal: str,
     ) -> Dict[str, Any]:
         """
         调用 VLLM 确认是否为真正的异常
-
-        Args:
-            image_path: 当前帧路径
-            detector_name: 使用的检测器名称
-            cv_result: CV 检测结果
-
-        Returns:
-            {
-                "is_confirmed_anomaly": bool,
-                "confidence": float,
-                "reason": str
-            }
         """
         base64_image = self._encode_image(image_path)
 
         # 构建确认 Prompt
-        prompt = f"""你是一位专业的视觉分析师。请分析这张图片，判断以下检测结果是否真实存在异常。
+        # 增加背景信息，告知 VLLM 用户的具体监控目标
+        prompt = f"""你是一位专业的视觉分析师。
+用户的监控目标是："{user_goal}"
 
-检测器: {detector_name}
-检测结果: {json.dumps(cv_result, indent=2, ensure_ascii=False)}
+CV 检测器（{detector_name}）报告了可疑情况，检测到画面亮度或内容发生了显著变化：
+{json.dumps(cv_result, indent=2, ensure_ascii=False)}
 
-请仔细分析图片内容，回答：
-1. 这是否是真正的异常？（考虑可能的误报情况）
-2. 如果是误报，说明原因
-3. 如果是真实异常，描述具体异常内容
+请仔细观察图片，判断：
+1. 画面中的主体设备（如 iPad、电视或显示器）是否确实处于“关闭”、“黑屏”或“内容消失”的状态？
+2. 如果设备确实从开启变为关闭了（或者从亮屏变黑屏了），即使环境光线（如窗户光、日光灯）依然很亮，你也必须判定为异常，并返回 is_confirmed_anomaly: true。
+3. 只有当画面完全没有变化，或者设备屏幕依然亮着时，才判定为误报。
+
+注意：我们要捕捉的是“设备关闭”这个事件。
 
 返回格式（JSON）：
 ```json
 {{
   "is_confirmed_anomaly": true/false,
   "confidence": 0.0-1.0,
-  "reason": "详细说明"
+  "reason": "详细说明你看到的设备屏幕状态（亮着还是熄灭了）"
 }}
 ```"""
 
@@ -178,16 +174,28 @@ class VideoMonitor:
         self.stream_url = config.get("stream_url", "desktop")
         self.output_dir = Path(config.get("output_dir", "monitor_output"))
         self.alert_file = Path(config.get("alert_file", "VISION_ALERT.md"))
+        self.user_goal = config.get("user_goal", "监测画面异常")
 
         # 从配置中获取检测器信息
         self.detector_name = config.get("detector", "black_screen")
         self.detector_params = config.get("params", {})
+        self.baseline_image_path = config.get("baseline_image")
 
         # 初始化目录
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # 初始化检测器
         self.detector = get_detector(self.detector_name, self.detector_params)
+
+        # 如果提供了基准图，加载并设置
+        if self.baseline_image_path and os.path.exists(self.baseline_image_path):
+            print(f"   加载基准图: {self.baseline_image_path}")
+            baseline_frame = cv2.imread(self.baseline_image_path)
+            if baseline_frame is not None:
+                self.detector.detect(baseline_frame)
+                print("   ✅ 基准图加载并初始化完成")
+            else:
+                print(f"   ⚠️ 无法加载基准图: {self.baseline_image_path}")
 
         # VLLM 客户端
         vllm_config = config.get("vllm", {})
@@ -228,7 +236,14 @@ class VideoMonitor:
         else:
             # 视频流
             if self.video_capture is None or not self.video_capture.isOpened():
-                self.video_capture = cv2.VideoCapture(self.stream_url)
+                # 尝试解析为整数（摄像头索引）或字符串（URL/文件路径）
+                try:
+                    # 如果是纯数字字符串，转换为整数（摄像头索引）
+                    capture_source = int(self.stream_url)
+                except ValueError:
+                    # 否则作为字符串（URL 或文件路径）
+                    capture_source = self.stream_url
+                self.video_capture = cv2.VideoCapture(capture_source)
 
             if not self.video_capture.isOpened():
                 print(f"无法打开视频流: {self.stream_url}", file=sys.stderr)
@@ -303,6 +318,27 @@ class VideoMonitor:
         print(f"\n🔴 开始监控...")
         print(f"   按 Ctrl+C 停止\n")
 
+        # 预热：捕获并丢弃前几帧，确保摄像头准备好
+        print("   预热摄像头...")
+        for i in range(10):
+            _ = self.capture_frame()
+            time.sleep(0.1)
+        print("   ✅ 预热完成\n")
+
+        # 捕获第一帧作为基准（如果尚未设置）
+        if getattr(self.detector, "_baseline_brightness", None) is None:
+            print("   捕获基准帧...")
+            baseline_frame = self.capture_frame()
+            if baseline_frame is not None:
+                # 执行一次检测来建立基准
+                baseline_result = self.detect_suspicious(baseline_frame)
+                if baseline_result.get("metadata", {}).get("baseline_brightness"):
+                    print(
+                        f"   ✅ 基准亮度: {baseline_result['metadata']['baseline_brightness']:.1f}\n"
+                    )
+        else:
+            print("   ✅ 使用预设基准图")
+
         check_count = 0
 
         try:
@@ -319,10 +355,24 @@ class VideoMonitor:
                 # 2. CV 检测可疑情况
                 cv_result = self.detect_suspicious(frame)
 
+                # 记录所有检测到日志
+                self.monitor_logger.log_detection(
+                    {
+                        "check_count": check_count,
+                        "cv_result": cv_result,
+                        "is_suspicious": cv_result["is_suspicious"],
+                    }
+                )
+
                 if cv_result["is_suspicious"]:
                     print(
                         f"[{check_count}] ⚠️ 检测到可疑情况: {cv_result.get('alert_reason', '未知')}"
                     )
+
+                    # 保存疑似图片
+                    suspicious_path = self.save_frame(frame, "suspicious")
+                    cv_result["suspicious_image"] = str(suspicious_path)
+
                     self.suspicious_count += 1
 
                     # 3. 连续可疑达到阈值，调用 VLLM 确认
@@ -331,12 +381,12 @@ class VideoMonitor:
                             f"   连续 {self.suspicious_count} 次可疑，调用 VLLM 确认..."
                         )
 
-                        # 保存当前帧
-                        image_path = self.save_frame(frame, "suspicious")
-
                         # 调用 VLLM 确认
                         vllm_result = self.vllm.confirm_anomaly(
-                            str(image_path), self.detector_name, cv_result
+                            str(suspicious_path),
+                            self.detector_name,
+                            cv_result,
+                            self.user_goal,
                         )
 
                         print(
@@ -351,7 +401,7 @@ class VideoMonitor:
                                 "check_count": check_count,
                                 "cv_result": cv_result,
                                 "vllm_result": vllm_result,
-                                "image_path": str(image_path),
+                                "image_path": str(suspicious_path),
                                 "action": "confirmed"
                                 if vllm_result["is_confirmed_anomaly"]
                                 else "filtered",

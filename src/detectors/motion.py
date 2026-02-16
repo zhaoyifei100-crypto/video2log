@@ -6,45 +6,8 @@
 
 import cv2
 import numpy as np
-from .base import BaseDetector, DetectionResult
-
-
-def normalize_region(region, frame_height, frame_width):
-    """
-    将归一化坐标转换为像素坐标
-
-    Args:
-        region: [x1, y1, x2, y2] 归一化坐标(0.0-1.0)
-        frame_height: 帧高度
-        frame_width: 帧宽度
-
-    Returns:
-        (x1, y1, x2, y2) 像素坐标
-    """
-    if not region or len(region) != 4:
-        return None
-
-    x1, y1, x2, y2 = region
-
-    # 归一化坐标转换为像素
-    x1 = int(x1 * frame_width)
-    y1 = int(y1 * frame_height)
-    x2 = int(x2 * frame_width)
-    y2 = int(y2 * frame_height)
-
-    # 确保坐标在有效范围内
-    x1 = max(0, min(x1, frame_width))
-    y1 = max(0, min(y1, frame_height))
-    x2 = max(0, min(x2, frame_width))
-    y2 = max(0, min(y2, frame_height))
-
-    # 确保 x1 < x2, y1 < y2
-    if x1 > x2:
-        x1, x2 = x2, x1
-    if y1 > y2:
-        y1, y2 = y2, y1
-
-    return (x1, y1, x2, y2)
+from typing import Optional, List, Dict, Any
+from .base import BaseDetector, DetectionResult, normalize_region
 
 
 class MotionDetector(BaseDetector):
@@ -77,7 +40,7 @@ class MotionDetector(BaseDetector):
         self.prev_gray = None
 
     def detect(
-        self, frame: np.ndarray, prev_frame: np.ndarray = None
+        self, frame: np.ndarray, prev_frame: Optional[np.ndarray] = None
     ) -> DetectionResult:
         # 获取参数
         sensitivity = self.params.get("sensitivity", self.DEFAULT_PARAMS["sensitivity"])
@@ -113,7 +76,8 @@ class MotionDetector(BaseDetector):
         thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
 
         # 膨胀处理
-        thresh = cv2.dilate(thresh, None, iterations=2)
+        kernel = np.ones((5, 5), np.uint8)
+        thresh = cv2.dilate(thresh, kernel, iterations=2)
 
         # 找轮廓
         contours, _ = cv2.findContours(

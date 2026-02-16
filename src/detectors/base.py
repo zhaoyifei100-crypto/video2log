@@ -7,7 +7,7 @@ CV 描述使用 [LLM_DESC] 标记写在类 docstring 中
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 import numpy as np
 
 
@@ -20,6 +20,46 @@ class DetectionResult:
     description: str  # 文字描述（供 LLM 阅读）
     metadata: Dict[str, Any]  # 原始数据（供二次分析）
     alert_reason: Optional[str] = None  # 触发警报的原因
+
+
+def normalize_region(
+    region: Optional[list], frame_height: int, frame_width: int
+) -> Optional[Tuple[int, int, int, int]]:
+    """
+    将归一化坐标转换为像素坐标
+
+    Args:
+        region: [x1, y1, x2, y2] 归一化坐标(0.0-1.0)
+        frame_height: 帧高度
+        frame_width: 帧宽度
+
+    Returns:
+        (x1, y1, x2, y2) 像素坐标
+    """
+    if not region or len(region) != 4:
+        return None
+
+    x1, y1, x2, y2 = region
+
+    # 归一化坐标转换为像素
+    x1_px = int(x1 * frame_width)
+    y1_px = int(y1 * frame_height)
+    x2_px = int(x2 * frame_width)
+    y2_px = int(y2 * frame_height)
+
+    # 确保坐标在有效范围内
+    x1_px = max(0, min(x1_px, frame_width))
+    y1_px = max(0, min(y1_px, frame_height))
+    x2_px = max(0, min(x2_px, frame_width))
+    y2_px = max(0, min(y2_px, frame_height))
+
+    # 确保 x1 < x2, y1 < y2
+    if x1_px > x2_px:
+        x1_px, x2_px = x2_px, x1_px
+    if y1_px > y2_px:
+        y1_px, y2_px = y2_px, y1_px
+
+    return (x1_px, y1_px, x2_px, y2_px)
 
 
 class BaseDetector(ABC):
@@ -40,7 +80,7 @@ class BaseDetector(ABC):
         \"\"\"
     """
 
-    def __init__(self, params: Dict[str, Any] = None):
+    def __init__(self, params: Optional[Dict[str, Any]] = None):
         """
         Args:
             params: LLM 生成的参数配置
@@ -50,7 +90,7 @@ class BaseDetector(ABC):
 
     @abstractmethod
     def detect(
-        self, frame: np.ndarray, prev_frame: np.ndarray = None
+        self, frame: np.ndarray, prev_frame: Optional[np.ndarray] = None
     ) -> DetectionResult:
         """
         执行检测
