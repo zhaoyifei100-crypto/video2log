@@ -5,6 +5,7 @@ Video2Log Monitor - 独立后台监控脚本
 - 独立进程，不阻塞主 Agent
 - CV 检测 + VLLM 二次确认
 - 确认异常后写入 VISION_ALERT.md 并退出
+- 使用 CV 模板系统（动态加载检测器）
 """
 
 import sys
@@ -25,7 +26,7 @@ import requests
 SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR.parent))
 
-from src.opencv_helper import OpenCVHelper
+from src.detectors import get_detector, build_llm_menu, DetectionResult
 from src.logger import logger
 
 
@@ -47,14 +48,15 @@ class VLLMClient:
             return base64.b64encode(f.read()).decode("utf-8")
 
     def confirm_anomaly(
-        self, image_path: str, cv_result: Dict[str, Any]
+        self, image_path: str, detector_name: str, cv_result: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         调用 VLLM 确认是否为真正的异常
 
         Args:
             image_path: 当前帧路径
-            cv_result: CV 算法检测结果
+            detector_name: 使用的检测器名称
+            cv_result: CV 检测结果
 
         Returns:
             {
@@ -66,12 +68,10 @@ class VLLMClient:
         base64_image = self._encode_image(image_path)
 
         # 构建确认 Prompt
-        prompt = f"""你是一位专业的视觉分析师。请分析这张图片，判断以下 CV 算法检测到的异常是否真实存在。
+        prompt = f"""你是一位专业的视觉分析师。请分析这张图片，判断以下检测结果是否真实存在异常。
 
-CV 算法检测结果：
-```json
-{json.dumps(cv_result, indent=2, ensure_ascii=False)}
-```
+检测器: {detector_name}
+检测结果: {json.dumps(cv_result, indent=2, ensure_ascii=False)}
 
 请仔细分析图片内容，回答：
 1. 这是否是真正的异常？（考虑可能的误报情况）
@@ -174,27 +174,27 @@ class VideoMonitor:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.monitor_type = config.get("monitor_type", "black_screen")
         self.interval = config.get("interval", 5)
         self.stream_url = config.get("stream_url", "desktop")
-        self.threshold = config.get("threshold", 30)
         self.output_dir = Path(config.get("output_dir", "monitor_output"))
         self.alert_file = Path(config.get("alert_file", "VISION_ALERT.md"))
+
+        # 从配置中获取检测器信息
+        self.detector_name = config.get("detector", "black_screen")
+        self.detector_params = config.get("params", {})
 
         # 初始化目录
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # CV 检测器
-        self.cv_helper = OpenCVHelper(
-            brightness_threshold=self.threshold, dark_ratio_threshold=0.9
-        )
+        # 初始化检测器
+        self.detector = get_detector(self.detector_name, self.detector_params)
 
         # VLLM 客户端
         vllm_config = config.get("vllm", {})
         self.vllm = VLLMClient(vllm_config)
 
         # 日志记录器
-        self.logger = MonitorLogger(self.output_dir / "monitor_logs.jsonl")
+        self.monitor_logger = MonitorLogger(self.output_dir / "monitor_logs.jsonl")
 
         # 视频捕获
         self.video_capture = None
@@ -203,8 +203,12 @@ class VideoMonitor:
         self.suspicious_count = 0
         self.max_suspicious = 2  # 连续可疑次数阈值
 
+        # 前一帧（用于运动检测）
+        self.prev_frame = None
+
         print(f"🎥 监控器初始化完成")
-        print(f"   类型: {self.monitor_type}")
+        print(f"   检测器: {self.detector_name}")
+        print(f"   参数: {self.detector_params}")
         print(f"   间隔: {self.interval}秒")
         print(f"   输出: {self.output_dir}")
 
@@ -243,47 +247,30 @@ class VideoMonitor:
 
     def detect_suspicious(self, frame: np.ndarray) -> Dict[str, Any]:
         """
-        CV 算法检测可疑情况
-        返回可疑检测结果，不直接判定异常
+        使用检测器检测可疑情况
         """
-        analysis = self.cv_helper.analyze_frame(frame)
+        # 执行检测
+        result = self.detector.detect(frame, self.prev_frame)
 
-        result = {
-            "avg_brightness": analysis.avg_brightness,
-            "dark_ratio": analysis.dark_ratio,
-            "motion_score": analysis.motion_score,
-            "is_suspicious": False,
-            "suspicious_type": None,
-            "confidence": 0.0,
+        # 更新前一帧
+        self.prev_frame = frame.copy()
+
+        # 转换为字典
+        return {
+            "is_suspicious": result.is_suspicious,
+            "confidence": result.confidence,
+            "description": result.description,
+            "metadata": result.metadata,
+            "alert_reason": result.alert_reason,
         }
-
-        # 根据监控类型判断可疑情况
-        if self.monitor_type == "black_screen":
-            # 黑屏检测
-            if analysis.avg_brightness < self.threshold:
-                result["is_suspicious"] = True
-                result["suspicious_type"] = "low_brightness"
-                result["confidence"] = 1.0 - (analysis.avg_brightness / self.threshold)
-            elif analysis.dark_ratio > 0.9:
-                result["is_suspicious"] = True
-                result["suspicious_type"] = "high_dark_ratio"
-                result["confidence"] = analysis.dark_ratio
-
-        elif self.monitor_type == "motion":
-            # 运动检测
-            if analysis.motion_score > 5000:  # 运动阈值
-                result["is_suspicious"] = True
-                result["suspicious_type"] = "motion_detected"
-                result["confidence"] = min(analysis.motion_score / 10000, 1.0)
-
-        return result
 
     def write_alert(self, cv_result: Dict, vllm_result: Dict, image_path: Path):
         """写入异常警报到文件"""
         alert_content = f"""# 🚨 视频监控异常报告
 
 **检测时间**: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-**监控类型**: {self.monitor_type}
+**检测器**: {self.detector_name}
+**参数**: {json.dumps(self.detector_params, ensure_ascii=False)}
 
 ## CV 检测结果
 
@@ -334,7 +321,7 @@ class VideoMonitor:
 
                 if cv_result["is_suspicious"]:
                     print(
-                        f"[{check_count}] ⚠️ 检测到可疑情况: {cv_result['suspicious_type']}"
+                        f"[{check_count}] ⚠️ 检测到可疑情况: {cv_result.get('alert_reason', '未知')}"
                     )
                     self.suspicious_count += 1
 
@@ -349,7 +336,7 @@ class VideoMonitor:
 
                         # 调用 VLLM 确认
                         vllm_result = self.vllm.confirm_anomaly(
-                            str(image_path), cv_result
+                            str(image_path), self.detector_name, cv_result
                         )
 
                         print(
@@ -359,7 +346,7 @@ class VideoMonitor:
                         print(f"   原因: {vllm_result['reason'][:100]}...")
 
                         # 记录到日志
-                        self.logger.log_detection(
+                        self.monitor_logger.log_detection(
                             {
                                 "check_count": check_count,
                                 "cv_result": cv_result,
@@ -388,9 +375,8 @@ class VideoMonitor:
                         print(f"[{check_count}] ✅ 恢复正常")
                         self.suspicious_count = 0
                     elif check_count % 10 == 0:
-                        print(
-                            f"[{check_count}] 监控正常 (亮度: {cv_result['avg_brightness']:.1f})"
-                        )
+                        desc = cv_result.get("description", "正常")
+                        print(f"[{check_count}] 监控正常 ({desc})")
 
                 # 5. 正常等待
                 time.sleep(self.interval)
@@ -416,10 +402,10 @@ def main():
         sys.exit(1)
 
     with open(config_path, "r", encoding="utf-8") as f:
-        config = json.load(f)
+        config_data = json.load(f)
 
     # 启动监控
-    monitor = VideoMonitor(config)
+    monitor = VideoMonitor(config_data)
 
     if args.dry_run:
         # 预检查模式：只运行一次
@@ -436,9 +422,6 @@ def main():
         # 2. CV 检测
         cv_result = monitor.detect_suspicious(frame)
         print(f"✅ CV 检测成功: {cv_result}")
-
-        # 3. 尝试 VLLM 连接（可选，跳过以加快速度）
-        # vllm_result = monitor.vllm.confirm_anomaly(...)
 
         print("\n✅ 预检查通过，monitor 可正常启动")
         sys.exit(0)

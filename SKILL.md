@@ -65,8 +65,23 @@ metadata:
 
 ## 动态视觉
 
-> 持续监控，非阻塞设计（CV + VLLM 双重确认）
+> 持续监控，非阻塞设计（CV 模板 + LLM 选择 + VLLM 确认）
 
+### 设计思路
+
+**为什么不直接让 LLM 生成代码？**
+- ❌ 代码格式易出错（转义、缩进问题）
+- ❌ 难以验证代码正确性
+- ✅ **模板系统**：预置经过测试的 CV 算法
+- ✅ **LLM 只做选择题**：从模板菜单中选择最合适的
+- ✅ **易于扩展**：新增场景只需添加模板
+
+**工作流程**：
+1. Agent 查看初始画面
+2. LLM 从模板菜单选择合适的检测器
+3. 配置参数（阈值、区域等）
+4. 启动后台监控进程执行检测
+5. CV 检测可疑 → VLLM 确认 → 触发警报
 
 ### 架构设计
 
@@ -159,19 +174,26 @@ print('初始帧已保存')
 - 理解用户意图（黑屏检测、运动检测等）
 
 **1.3** 创建监控配置：
+
+Agent 分析画面后，从预置的 CV 模板中选择合适的检测器并配置参数：
+
 ```python
 exec("""
 import json
 import os
 
+# LLM 根据画面分析选择检测器和参数
+# 示例：检测到电视画面 -> 选择 black_screen 检测器（相对亮度变化）
 config = {
-    'monitor_type': 'black_screen',  # black_screen / motion / custom
-    'target': 'TV1',
-    'interval': 5,  # 检查间隔秒
-    'threshold': 30,  # 亮度阈值
+    'detector': 'black_screen',  # 检测器名称
+    'params': {                   # LLM 配置的参数
+        'brightness_drop': 0.5,   # 亮度下降 50% 视为黑屏
+        'dark_ratio': 0.8         # 暗像素比例阈值
+    },
+    'interval': 5,               # 检查间隔秒
     'output_dir': 'monitor_output',
     'alert_file': 'VISION_ALERT.md',
-    'stream_url': 'desktop',  # desktop 或 RTSP 地址
+    'stream_url': 'desktop',
     'vllm': {
         'provider': 'siliconflow',
         'api_key': os.getenv('SILICONFLOW_API_KEY', ''),
@@ -349,26 +371,50 @@ monitor.py 工作流程:
 └─ 4. 退出（异常或用户中断）
 ```
 
-### CV 函数库
+### CV 检测器模板
 
-| 函数 | 说明 | 返回 |
-|------|------|------|
-| `detect_brightness(frame, region=None)` | 亮度检测 | `float: 0-255` |
-| `detect_dark_ratio(frame, threshold=30)` | 暗像素比例 | `float: 0.0-1.0` |
-| `detect_motion(frame, prev_frame)` | 运动检测 | `float: 差异分数` |
-| `detect_edges(frame, low=50, high=150)` | 边缘检测 | `dict: edge_count` |
-| `compare_frames(frame1, frame2)` | 帧对比 | `dict: diff_score` |
-| `crop_region(frame, x1, y1, x2, y2)` | 裁剪区域 | `np.ndarray` |
+系统预置以下检测器模板，LLM 根据场景选择最合适的：
+
+#### black_screen (黑屏检测)
+- **能力**：检测屏幕是否黑屏、关闭或信号丢失
+- **原理**：以 INIT 阶段为基准，检测相对亮度变化
+- **场景**：电视关闭（亮度骤降）、显示器断电、信号丢失
+- **参数**：
+  - `brightness_drop`: 亮度下降阈值 (0.0-1.0, 默认0.5)
+    - 说明：当前亮度比基准亮度下降超过此比例视为黑屏
+    - 示例：0.5 表示下降 50% 触发警报
+  - `dark_ratio`: 暗像素比例 (0.0-1.0, 默认0.8)
+  - `region`: 检测区域 [x1, y1, x2, y2] (可选)
+    - **使用归一化坐标** (0.0-1.0)：自动适配不同分辨率
+      - 示例：`[0.3, 0.2, 0.7, 0.8]` 表示画面中间区域（30%从左, 20%从上, 70%从左, 80%从上）
+      - 左上角为 [0.0, 0.0]，右下角为 [1.0, 1.0]
+- **输出**：`current_brightness`, `baseline_brightness`, `brightness_drop_ratio`
+
+#### motion (运动检测)
+- **能力**：检测画面运动、物体移动、有人出现
+- **场景**：有人进入监控区域、物体被移动
+- **参数**：
+  - `sensitivity`: 灵敏度 (1000-50000, 默认5000)
+  - `min_area`: 最小运动区域面积 (默认500)
+  - `region`: 检测区域 [x1, y1, x2, y2] (可选)
+    - **使用归一化坐标** (0.0-1.0)：自动适配不同分辨率
+      - 示例：`[0.3, 0.2, 0.7, 0.8]` 表示画面中间区域
+- **输出**：`motion_score`, `areas`
+
+**扩展方式**：在 `src/detectors/` 目录添加新检测器类，自动注册到系统中。
 
 ### 配置说明
 
 **monitor_config.json**:
 ```json
 {
-  "monitor_type": "black_screen",
-  "target": "TV1",
+  "detector": "black_screen",
+  "params": {
+    "brightness_drop": 0.5,
+    "dark_ratio": 0.8,
+    "region": [0.3, 0.2, 0.7, 0.8]
+  },
   "interval": 5,
-  "threshold": 30,
   "output_dir": "monitor_output",
   "alert_file": "VISION_ALERT.md",
   "stream_url": "desktop",
