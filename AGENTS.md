@@ -1,58 +1,135 @@
-# AGENTS.md - video2log 开发指南
+# AGENTS.md - video2log MCP Vision Server
 
-## 项目概述
+AI Agent 开发指南 - 本项目是 OpenClaw/nanobot 的 MCP 视觉服务器
 
-video2log 是 nanobot 的视觉模块，让 AI Agent 具有视觉能力：
-- **静态视觉**: 看图说话
-- **动态视觉**: 看监控、检测异常
+## 项目定位
 
-技术栈：Python + OpenCV + LLM (Qwen2.5-VL)
+**video2log** 现在是一个 **MCP Server**，为本地 AI Agent 提供视觉能力：
+- 多路摄像头支持（CSI/USB/HTTP）
+- 运动检测自动触发 + VLM 描述
+- 通过 MCP notification 推送告警
+- 树莓派本地部署，stdio 传输
+
+## 技术栈
+
+- **协议**: MCP (Model Context Protocol)
+- **传输**: stdio（本地进程通信）
+- **视觉**: OpenCV + 640x480
+- **VLM**: OpenAI 兼容接口（SiliconFlow/Qwen2.5-VL）
+- **配置**: YAML + Pydantic
 
 ---
 
 ## 开发命令
 
-### 安装依赖
-
 ```bash
+# 安装依赖
 pip install -r requirements.txt
+
+# 运行 MCP Server（stdio 模式）
+python -m video2log.server
+
+# 测试单个 tool（使用 mcp CLI）
+mcp dev src/server.py
 ```
 
-### 运行应用
+---
 
-```bash
-# 静态模式（描述画面）
-python main.py --once
+## 架构概览
 
-# 动态模式（检测异常）
-python main.py --mode dynamic --once
-
-# 循环监控
-python main.py --mode dynamic --interval 30
+```
+┌─────────────────────────────────────┐
+│         OpenClaw / nanobot          │
+│           (MCP Client)              │
+└───────────┬─────────────────────────┘
+            │ MCP stdio
+            ▼
+┌─────────────────────────────────────┐
+│        video2log.server             │
+│  ┌─────────┐  ┌─────────────────┐   │
+│  │ Cameras │  │ Monitor Sessions│   │
+│  │ Manager │  │    Manager      │   │
+│  └────┬────┘  └────────┬────────┘   │
+│       │                │            │
+│       └────────────────┘            │
+│              │                      │
+│       ┌──────▼──────┐              │
+│       │   Motion    │              │
+│       │  Detector   │              │
+│       └──────┬──────┘              │
+│              │                      │
+│       ┌──────▼──────┐              │
+│       │  VLM Call   │              │
+│       └─────────────┘              │
+└─────────────────────────────────────┘
 ```
 
-### 测试
+---
 
-项目使用 pytest，测试文件位于 `tests/` 目录。
+## MCP Tools
 
-```bash
-# 运行所有测试
-pytest
+### capture
+拍摄单张照片
+```python
+async def capture(camera_id: str = "default") -> ImageContent
+```
 
-# 运行单个测试文件
-pytest tests/test_file.py
+### describe
+拍摄并描述画面
+```python
+async def describe(
+    camera_id: str = "default",
+    question: str = "描述当前画面"
+) -> str
+```
 
-# 运行单个测试函数
-pytest tests/test_file.py::test_function_name
+### start_monitoring
+开始监控（运动检测）
+```python
+async def start_monitoring(
+    camera_id: str = "default",
+    detector: Literal["motion"] = "motion",
+    sensitivity: float = 0.05,
+    auto_describe: bool = True,
+    describe_prompt: str = "描述画面中发生了什么"
+) -> str  # session_id
+```
 
-# 带详细输出
-pytest -v
+### stop_monitoring
+停止监控
+```python
+async def stop_monitoring(session_id: str) -> bool
+```
 
-# 显示打印输出
-pytest -s
+### list_cameras
+列出可用摄像头
+```python
+async def list_cameras() -> List[CameraInfo]
+```
 
-# 显示覆盖率
-pytest --cov=src --cov-report=html
+### get_monitoring_status
+获取监控状态
+```python
+async def get_monitoring_status(
+    session_id: Optional[str] = None
+) -> Union[MonitoringStatus, List[MonitoringStatus]]
+```
+
+---
+
+## MCP Notification
+
+### vision/alert
+运动检测触发时推送
+```python
+{
+    "session_id": str,
+    "camera_id": str,
+    "timestamp": str,
+    "trigger_type": "motion",
+    "description": Optional[str],  # VLM 描述
+    "image_base64": str
+}
 ```
 
 ---
@@ -60,184 +137,58 @@ pytest --cov=src --cov-report=html
 ## 代码规范
 
 ### 类型标注
-
-- **必须**使用类型注解（type hints）
-- 使用 `typing` 模块：`Optional`, `Dict`, `List`, `Any`, `Callable`
-
+必须使用类型注解
 ```python
 from typing import Optional, Dict, Any, List
+from numpy.typing import NDArray
 
-def process_frame(frame, mode: str = "static") -> Optional[Dict[str, Any]]:
+def process_frame(frame: NDArray) -> Optional[Dict[str, Any]]:
     pass
 ```
 
-### 导入规范
-
-- 使用相对导入（针对项目内部模块）
-- 标准库 → 第三方库 → 项目模块分组
-
+### 导入顺序
 ```python
 # 标准库
 import time
-import json
-from pathlib import Path
+from typing import Optional
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
-from enum import Enum
 
-# 第三方库
+# 第三方
 import cv2
 import numpy as np
-import requests
+from mcp.server import Server
+from openai import AsyncOpenAI
 
-# 项目模块（相对导入）
-from .config import config
-from .logger import logger
-from .llm_client import get_llm_client
+# 项目模块
+from .camera import CameraManager
+from .config import Config
 ```
 
 ### 命名约定
-
-- **类名**: PascalCase
-  ```python
-  class VisionProcessor:
-      pass
-  
-  class VisionMode(Enum):
-      DYNAMIC = "dynamic"
-  ```
-
-- **函数/变量**: snake_case
-  ```python
-  def process_frame(self, frame):
-      last_frame_base64 = ""
-  ```
-
-- **常量**: 全大写 + 下划线
-  ```python
-  MAX_RETRIES = 3
-  DEFAULT_INTERVAL = 60
-  ```
-
-- **私有方法/变量**: 单下划线前缀
-  ```python
-  def _encode_image(self):
-      self._config = {}
-  ```
-
-### 数据结构
-
-- 使用 `@dataclass` 定义数据结构
-- 使用 `Enum` 定义枚举类型
-
-```python
-from dataclasses import dataclass, field
-from enum import Enum
-
-class VisionMode(Enum):
-    DYNAMIC = "dynamic"
-    STATIC = "static"
-
-@dataclass
-class VisionResult:
-    mode: VisionMode
-    state: VisionState = VisionState.INIT
-    frame: Optional[cv2.Mat] = None
-    cv_result: Optional[Dict[str, Any]] = None
-```
+- **类**: PascalCase (`CameraManager`, `MotionDetector`)
+- **函数/变量**: snake_case (`capture_frame()`, `motion_threshold`)
+- **常量**: UPPER_SNAKE_CASE (`DEFAULT_RESOLUTION = (640, 480)`)
+- **私有**: 单下划线前缀 (`_encode_image()`)
 
 ### 错误处理
-
-- 使用 `try/except` 捕获具体异常
-- 始终记录日志（使用 `logger` 模块）
-- 返回 `None` 或空值表示失败，而非抛出异常
-
+捕获具体异常，返回 None 或空值，不抛出
 ```python
 try:
-    response = self.llm_client.chat(prompt)
-except requests.exceptions.RequestException as e:
-    logger.error(f"LLM API 调用失败: {e}")
-    return None
-except json.JSONDecodeError as e:
-    logger.error(f"JSON 解析失败: {e}")
+    frame = camera.capture()
+except cv2.error as e:
+    logger.error(f"Capture failed: {e}")
     return None
 ```
 
-### 日志规范
-
-- 使用 `src/logger.py` 中的 `logger` 实例
-- 日志级别：
-  - `logger.debug()`: 调试信息
-  - `logger.info()`: 正常流程
-  - `logger.warning()`: 可恢复的异常
-  - `logger.error()`: 错误
-
+### 日志
+使用 Python 标准 logging
 ```python
-logger.info(f"VisionProcessor: mode={self.mode.value}")
-logger.warning(f"检测到异常: {reason}")
-logger.error(f"LLM 调用失败: {e}")
-```
+import logging
+logger = logging.getLogger(__name__)
 
-### Docstring
-
-- 使用中文 docstring（项目惯例）
-- 模块级 docstring 说明文件用途
-- 类和方法 docstring 说明功能
-
-```python
-"""
-视觉处理核心模块 - 动态/静态模式
-支持 LLM 自己生成 CV 代码进行监控
-"""
-
-class VisionProcessor:
-    """视觉处理器"""
-    
-    def capture_frame(self) -> Optional[cv2.Mat]:
-        """从视频流捕获一帧"""
-```
-
-### 代码结构
-
-- 每个模块一个主要类（如 `VisionProcessor`, `LLMClient`）
-- 使用配置类加载 YAML 配置
-- 公开 API 放在模块顶层（如 `get_llm_client()`）
-
-```python
-# 全局单例
-llm_client = None
-
-def get_llm_client() -> LLMClient:
-    """获取 LLM 客户端实例"""
-    global llm_client
-    if llm_client is None:
-        llm_client = LLMClient()
-    return llm_client
-```
-
-### 配置管理
-
-- 配置文件：`config/config.yaml`
-- 使用 `src/config.py` 中的 `Config` 类加载
-- 支持环境变量 `${VAR}` 替换
-
-```python
-from .config import config
-
-stream_url = config.get('stream_url', 'default_url')
-interval = config.get('interval', 60)
-```
-
-### 路径处理
-
-- 使用 `pathlib.Path` 处理路径
-- 相对路径基于项目根目录
-
-```python
-from pathlib import Path
-
-output_dir = Path("photos")
-output_dir.mkdir(parents=True, exist_ok=True)
+logger.info(f"Monitoring started: {session_id}")
+logger.warning(f"Camera disconnected: {camera_id}")
+logger.error(f"LLM call failed: {e}")
 ```
 
 ---
@@ -246,51 +197,99 @@ output_dir.mkdir(parents=True, exist_ok=True)
 
 ```
 video2log/
+├── pyproject.toml
+├── requirements.txt
+├── README.md
+├── AGENTS.md          # 本文件
+├── REWRITE_TODO.md    # 重构任务清单
 ├── config/
-│   └── config.yaml       # 配置文件
-├── src/
-│   ├── __init__.py
-│   ├── vision.py         # 核心处理器
-│   ├── opencv_helper.py  # OpenCV 辅助函数
-│   ├── llm_client.py    # LLM 调用
-│   ├── config.py        # 配置加载
-│   ├── logger.py        # 日志
-│   ├── detector.py      # 检测器
-│   └── capture_timer.py # 定时捕获
-├── tests/                 # 测试目录
-├── main.py               # 主入口
-└── requirements.txt     # 依赖
+│   └── config.yaml    # 配置模板
+└── src/
+    ├── __init__.py
+    ├── server.py      # MCP Server 主入口
+    ├── config.py      # 配置管理（Pydantic）
+    ├── camera.py      # 摄像头管理
+    ├── llm.py         # VLM 客户端
+    ├── monitor.py     # 监控会话管理
+    └── detectors/
+        ├── __init__.py
+        ├── base.py    # 检测器基类
+        └── motion.py  # 运动检测
 ```
 
 ---
 
-## 常用开发模式
+## 关键设计
 
-### 动态模式状态机
+### 图像尺寸
+固定 **640x480**，运动检测和 VLM 都使用这个尺寸
 
-```python
-class VisionState(Enum):
-    INIT = "init"       # 初始：截帧 + LLM 静态分析
-    MONITOR = "monitor" # 监控：执行 LLM 生成的 CV 代码
-    ALERT = "alert"     # 异常：LLM 决策下一步
-    DONE = "done"       # 完成
+### 监控循环
+- 每 0.5 秒检查一次
+- 运动检测阈值默认 0.05
+- 告警冷却 10 秒
+
+### VLM 调用
+- MCP Server 直接调用（使用配置的 API Key）
+- OpenAI 兼容接口
+- 图像 base64 编码
+
+### 多摄像头
+每个摄像头独立，可以同时监控多个
+
+---
+
+## 配置文件示例
+
+```yaml
+# config/config.yaml
+llm:
+  api_key: "${SILICONFLOW_API_KEY}"
+  model: "Qwen/Qwen2.5-VL-72B-Instruct"
+  base_url: "https://api.siliconflow.cn/v1"
+
+cameras:
+  default:
+    type: "csi"
+    source: 0
+    resolution: [640, 480]
+  
+  usb_cam:
+    type: "usb"
+    source: "/dev/video2"
+    resolution: [640, 480]
+
+monitoring:
+  motion_threshold: 0.05
+  check_interval: 0.5
+  alert_cooldown: 10
 ```
 
-### CV 函数命名
+---
 
-```python
-def cv_detect_brightness(self, frame, region=None) -> float:
-    """检测亮度"""
+## OpenClaw 集成
 
-def cv_detect_dark_ratio(self, frame, threshold=30) -> float:
-    """检测暗像素比例"""
+用户在 OpenClaw config 中添加：
+
+```json
+{
+  "mcpServers": {
+    "vision": {
+      "command": "python",
+      "args": ["-m", "video2log.server"],
+      "env": {
+        "VIDEO2LOG_CONFIG": "/home/pi/.config/video2log/config.yaml"
+      }
+    }
+  }
+}
 ```
 
 ---
 
 ## 注意事项
 
-1. **敏感信息**: 不要提交 API Key，使用环境变量
-2. **图像处理**: OpenCV 使用 BGR 格式
-3. **性能**: 大图像先 resize 再处理，减少 token 消耗
-4. **测试**: 新功能应添加测试，覆盖核心逻辑
+1. **不要在代码中提交 API Key** - 使用配置文件或环境变量
+2. **树莓派 CSI 摄像头** - 需要 picamera2 库（Raspberry Pi OS）
+3. **性能考虑** - 640x480 在树莓派 4 上运行流畅
+4. **错误恢复** - 摄像头断开后应自动重连
