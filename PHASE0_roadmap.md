@@ -25,11 +25,15 @@
 - [ ] Create GitHub org and repos (Eye iOS, Hub macOS)
 - [ ] Define minimal protocol for "event → confirm" flow
 - [ ] Set up basic CI and README scaffolding
+- [ ] Expose LLM config UI (model/provider/base URL/API key)
+- [ ] Ensure local/LAN Ollama endpoint support from day one
 
 ### Month 1-2: MVP Loop
 - [ ] iOS Eye: camera capture + local motion detection
 - [ ] macOS Hub: WebSocket server + event viewer
 - [ ] End-to-end flow: Eye detects → Hub receives → user confirms
+- [ ] LLM config persistence + validation in app settings
+- [ ] Ollama local/LAN smoke test (self-hosted model)
 
 ### Month 2-3: UX + Reliability
 - [ ] Add status UI (FPS, latency, network state)
