@@ -1,0 +1,58 @@
+; LokmEye Stand V1
+; 3D Printing Configuration
+
+[general]
+name = "LokmEye Stand V1"
+version = "0.1.0"
+description = "Universal phone stand for LokmEye with Qi charging slot"
+author = "lokmeye"
+license = "MIT"
+
+[dimensions]
+width = 80          ; mm
+height = 120        ; mm
+depth = 100         ; mm
+angle = 15          ; degrees
+
+[features]
+qi_slot = true
+qi_slot_width = 75  ; mm
+qi_slot_depth = 12  ; mm
+
+cable_routing = true
+cable_diameter = 4  ; mm
+
+ventilation = true
+vent_hole_diameter = 6  ; mm
+vent_pattern = "grid"
+
+tripod_mount = true
+tripod_screw = "1/4-20"
+
+[print_settings]
+supported_formats = ["STL", "OBJ", "3MF"]
+recommended_material = "PLA+"  ; or PETG
+infill = 20                    ; %
+layer_height = 0.2             ; mm
+supports = false               ; designed for support-free printing
+orientation = "standing"       ; print orientation
+
+[compatibility]
+min_phone_width = 60   ; mm
+max_phone_width = 85   ; mm
+min_phone_thickness = 7   ; mm
+max_phone_thickness = 15  ; mm
+
+; Compatible devices (tested)
+tested_devices = [
+    "iPhone 11",
+    "iPhone 12",
+    "iPhone 13", 
+    "iPhone 14",
+    "iPhone 15",
+    "iPhone SE 2nd/3rd gen",
+    "Samsung Galaxy S21",
+    "Google Pixel 6"
+]
+
+; TODO: Add CAD files (.step, .f3d) when designed
