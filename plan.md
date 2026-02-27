@@ -1,692 +1,1010 @@
-# LokmEye iOS 技术路线图 v1.0
+# LokmEye iOS 技术路线图 v1.2
 
-**基于 OpenClaw SKILL + iOS Node 架构**
+**基于 OpenClaw Node 协议 + 独立 iOS App + AR预览 架构**
+
+*Look My Eye = 智能监控 + AR视觉体验*
 
 ---
 
 ## 文档信息
 
-- **版本**: 1.0
-- **创建日期**: 2026-02-27
+- **版本**: 1.2
+- **更新日期**: 2026-02-27
 - **状态**: Draft (待Review)
-- **关联项目**: LokmEye (LookMyEye) - 智能监控解决方案
+- **关联项目**: LokmEye (LookMyEye) - 智能监控+AR解决方案
+- **变更说明**: 
+  - 采用Node模式接入OpenClaw，独立开发iOS App
+  - 新增AR预览模块（Matrix猫头），体现"Look My Eye"第二层含义
+  - 4人团队配置：iOS + AR + Backend + QA
 
 ---
 
 ## 1. 项目概述
 
 ### 1.1 项目愿景
-让旧iPhone变身AI智能监控眼，通过OpenClaw SKILL架构实现零门槛配置、智能化检测、自然语言交互。
+让旧iPhone变身AI智能监控眼，作为OpenClaw Node接入，实现：
+- **AR即界面** (Look My Eye): **Matrix猫头 = 系统主UI**，用户通过AR猫头进行语音/手势交互
+- **零门槛配置**: 通过OpenClaw Gateway自动发现与配对，配置通过AR界面完成
+- **智能化检测**: 本地Vision框架人形/运动检测，结果反馈在AR界面
+- **自然语言交互**: 对Matrix猫头说话，通过OpenClaw SKILL控制监控
 
-### 1.2 技术架构
+**核心理念**: "The EYE is the Interface" - 屏幕上必须有那只猫，它是产品的灵魂
+
+### 1.2 技术架构 (AR优先)
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     OpenClaw Gateway (Mac/Server)               │
-│  ┌──────────────┐    ┌─────────────┐    ┌─────────────────────┐ │
-│  │lokmeye-skill │    │ nodes-tool  │    │    camsnap skill    │ │
-│  │  (业务逻辑)   │◄───│ (节点控制)  │────│   (相机管理)         │ │
-│  │  · 工作流编排 │    │  · 命令分发 │    │   · RTSP支持        │ │
-│  │  · 智能分析   │    │  · 事件收集 │    │   · 网络摄像头       │ │
-│  │  · LLM决策   │    │  · 配置同步 │    │                     │ │
-│  └──────┬───────┘    └──────┬──────┘    └─────────────────────┘ │
-└─────────┼──────────────────┼─────────────────────────────────────┘
-          │                  │
-          │ WebSocket        │ node.invoke (RPC)
-          │ Gateway Protocol │
-          │                  │
-    ┌─────▼──────────────────▼─────────────────────────────────┐
-    │              LokmEye iOS App (Node模式)                   │
-    │  ┌─────────────────────────────────────────────────────┐ │
-    │  │           Gateway Node Client                       │ │
-    │  │  ┌──────────────┐  ┌──────────────┐  ┌────────────┐ │ │
-    │  │  │  Bonjour发现 │  │ WebSocket连接│  │ 配对认证   │ │ │
-    │  │  └──────────────┘  └──────────────┘  └────────────┘ │ │
-    │  └─────────────────────────────────────────────────────┘ │
-    │  ┌─────────────────────────────────────────────────────┐ │
-    │  │           Command Handlers (命令处理器)              │ │
-    │  │  · camera.snap      · detection.start              │ │
-    │  │  · camera.clip      · detection.stop               │ │
-    │  │  · camera.list      · detection.config             │ │
-    │  └─────────────────────────────────────────────────────┘ │
-    │  ┌─────────────────────────────────────────────────────┐ │
-    │  │           Vision Engine (视觉引擎)                   │ │
-    │  │  ┌──────────────┐  ┌──────────────┐  ┌────────────┐ │ │
-    │  │  │人形检测(VN)  │  │运动检测(光流)│  │ 物体分类   │ │ │
-    │  │  │· 边界框输出  │  │· 区域变化   │  │· Core ML  │ │ │
-    │  │  │· 置信度评分  │  │· 阈值可调   │  │· 本地推理 │ │ │
-    │  │  └──────────────┘  └──────────────┘  └────────────┘ │ │
-    │  └─────────────────────────────────────────────────────┘ │
-    │  ┌─────────────────────────────────────────────────────┐ │
-    │  │           Event Pipeline (事件管道)                  │ │
-    │  │  采集 → 预处理 → 检测 → 过滤 → 上报 → 确认         │ │
-    │  │  · 本地缓存(断网)  · 批量上报  · 去重合并           │ │
-    │  └─────────────────────────────────────────────────────┘ │
-    └──────────────────────────────────────────────────────────┘
-                              │
-                              │ APNs Push Notification
-                              ▼
-                    ┌─────────────────┐
-                    │   用户手机       │
-                    │ (Telegram/微信) │
-                    └─────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                         用户 (通过AR界面交互)                              │
+│                           ↓ 语音/手势/凝视                                  │
+│                    ┌──────────────────────┐                               │
+│                    │   Matrix猫头 (AR UI)  │ ← 始终显示，产品灵魂          │
+│                    │  · 状态显示           │                               │
+│                    │  · 语音交互           │                               │
+│                    │  · 手势控制           │                               │
+│                    │  · 情绪反馈           │                               │
+│                    └──────────┬───────────┘                               │
+└───────────────────────────────┼──────────────────────────────────────────┘
+                                │
+┌───────────────────────────────▼──────────────────────────────────────────┐
+│                      LokmEye iOS App - AR Layer                          │
+│  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │                AR Interface (David - Week 2-5)                      │  │
+│  │  ┌───────────────┐ ┌───────────────┐ ┌──────────────────────┐     │  │
+│  │  │ Matrix猫头    │ │ RealityKit    │ │ Metal Shaders        │     │  │
+│  │  │ 3D Model      │ │ Scene         │ │ (Digital Rain)       │     │  │
+│  │  └───────────────┘ └───────────────┘ └──────────────────────┘     │  │
+│  │  ┌───────────────┐ ┌───────────────┐ ┌──────────────────────┐     │  │
+│  │  │ ARKit Tracking│ │ Interaction   │ │ Visual Effects       │     │  │
+│  │  │ (Face/World)  │ │ (Voice/Gesture│ │ (Bloom/Animations)   │     │  │
+│  │  └───────────────┘ └───────────────┘ └──────────────────────┘     │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+│  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │           AR-Vision Bridge (Alex - 架构预留)                        │  │
+│  │   · 检测结果 → 猫头反馈 (眨眼/变色/旋转)                            │  │
+│  │   · 语音命令 ← 猫头交互                                            │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────┘
+                                │
+                                │ 后台监控功能 (Alex - Week 1-5)
+                                │
+┌───────────────────────────────▼──────────────────────────────────────────┐
+│                    LokmEye iOS App - Backend Layer                       │
+│  ┌──────────────────────────────┐  ┌──────────────────────────────────┐  │
+│  │      Node Client             │  │      Vision Engine               │  │
+│  │  · WebSocket Manager         │  │  · Person Detection (VN)         │  │
+│  │  · Bonjour Discovery         │  │  · Motion Detection              │  │
+│  │  · Pairing/Auth              │  │  · Event Stream                  │  │
+│  │  · Command Router            │  │  · Local Storage                 │  │
+│  └──────────────┬───────────────┘  └──────────────────────────────────┘  │
+│                 │                                                         │
+│                 │ WebSocket                                               │
+└─────────────────┼─────────────────────────────────────────────────────────┘
+                  │
+┌─────────────────▼────────────────────────────────────────────────────────┐
+│                    OpenClaw Gateway (外部系统，不修改)                    │
+│  ┌─────────────────────┐  ┌─────────────────────┐  ┌───────────────────┐ │
+│  │   nodes-tool        │  │   webhook           │  │   SKILL Loader    │ │
+│  │   (command router)  │  │   (event receiver)  │  │   (lokmeye-skill) │ │
+│  └─────────────────────┘  └─────────────────────┘  └───────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1.3 核心概念定义
+### 1.3 核心概念与边界
 
-| 术语 | 定义 | 说明 |
-|------|------|------|
-| **SKILL** | OpenClaw的技能单元 | 包含`SKILL.md` + 可选代码，定义一组相关工具和命令 |
-| **Node** | 设备节点 | iOS App作为OpenClaw Gateway的子节点，通过`node.*`协议通信 |
-| **Gateway** | OpenClaw网关 | 控制平面，管理所有Node、处理命令分发、运行SKILL |
-| **Command** | 远程命令 | Gateway通过WebSocket向iOS Node发送的执行指令 |
-| **Event** | 检测事件 | iOS Node主动向Gateway上报的视觉检测结果 |
-| **APNs** | 苹果推送服务 | 用于后台事件通知唤醒用户 |
+| 组件 | 责任方 | 说明 |
+|------|--------|------|
+| **OpenClaw Gateway** | OpenClaw团队维护 | 我们不修改，只使用标准Node协议 |
+| **Node Protocol** | OpenClaw定义 | WebSocket + JSON-RPC，支持`node.invoke`和事件推送 |
+| **LokmEye iOS** | 我们开发 | 独立App，实现Node客户端 + Vision检测 |
+| **LokmEye SKILL** | 我们开发 | 用户侧配置，通过OpenClaw标准工具调用 |
+| **Webhook** | Gateway配置 | 接收LokmEye事件，转发给Main Agent |
+
+### 1.4 与OpenClaw的关系
+
+**不复用OpenClaw iOS App代码**，原因：
+1. 简化依赖，降低耦合
+2. 独立迭代，不受OpenClaw发布周期影响
+3. 专注监控场景，UI更简洁
+
+**复用OpenClaw的设计思想和协议**：
+1. Node协议 (WebSocket连接、配对、命令处理)
+2. Camera实现参考 (但不直接复制)
+3. 事件格式规范
 
 ---
 
-## 2. Phase 2: OpenClaw SKILL + iOS Node 开发
+## 2. 角色分工与工作分配
 
-**目标**: 建立完整的SKILL-Node通信体系，实现基础监控能力  
-**时间**: 3-4周  
-**状态**: 🔴 Not Started
+### 2.1 团队配置 (推荐 4人)
 
-### 2.1 里程碑 M3: 基础框架搭建 (Week 1)
+| 角色 | 核心技能 | 主要职责 | 入场时间 |
+|------|----------|----------|----------|
+| **iOS Lead Engineer (Alex)** | Swift, AVFoundation, Vision, WebSocket | **AR架构预留** + Node协议 + Vision引擎 + 系统集成 | **Week 1** (立即) |
+| **AR Graphics Engineer (David)** | Swift, RealityKit, Metal, ARKit | **Matrix猫头核心UI** + RealityKit渲染 + 3D交互 | **Week 2-3** (后续加入) |
+| **Backend/SKILL Engineer (Bob)** | TypeScript, Node.js, OpenClaw | SKILL开发 + Gateway配置 + 事件处理 | **Week 1** (并行) |
+| **Product/QA (Carol)** | iOS测试, 产品思维 | 需求确认 + 测试用例 + 验收 | 全程 |
 
-**目标**: 建立SKILL框架和Node连接能力
+**核心架构理念**：
+> **"The EYE is the Interface"** - Matrix猫头不是附加功能，而是主UI
 
-#### 2.1.1 OpenClaw端: LokmEye SKILL 框架
+- **David负责**: Matrix猫头 = 系统主界面，用户通过猫头进行所有交互
+- **Alex负责**: 架构预留AR层 + 后台监控功能 + 系统集成
+- **关键理解**: AR猫头**始终显示**（或作为唤醒后的主界面），监控通过AR界面操作
 
-**任务清单**:
-- [ ] 创建 `skills/lokmeye/SKILL.md` 基础结构
-  ```yaml
-  ---
-  name: lokmeye
-  description: 智能视觉监控SKILL - 将iPhone变为AI监控眼
-  metadata:
-    openclaw:
-      emoji: 👁️
-      requires:
-        node: ios  # 需要iOS node支持
-  ---
-  ```
-- [ ] 定义前置条件检查逻辑（检查iOS Node是否已配对）
-- [ ] 实现SKILL加载时的依赖验证
-- [ ] 配置权限门控（仅授权用户可以访问监控命令）
+### 2.2 详细工作分配
 
-**交付物**:
-- `skills/lokmeye/SKILL.md` (已可被OpenClaw识别)
-- 前置条件检查通过
-- SKILL在`openclaw doctor`中显示为可用
+#### Alex (iOS Lead) - 约 4.5周工作量
 
-#### 2.1.2 iOS端: Gateway Node Client
+**Week 1-2: Node Client 基础设施**
+- [ ] **2.1.1** WebSocket连接管理器
+  - 建立/断开连接，心跳保活，重连机制
+  - 依赖: 无
+  - 产出: `WebSocketManager.swift`
+  
+- [ ] **2.1.2** Node协议实现
+  - `node.describe` 响应
+  - `node.invoke` 命令路由
+  - 依赖: 2.1.1
+  - 产出: `NodeClient.swift`, `CommandRouter.swift`
 
-**任务清单**:
-- [ ] 实现 `GatewayNodeClient` 类 (WebSocket管理)
-  ```swift
-  actor GatewayNodeClient {
-      func connect(to host: String, port: Int) async throws
-      func disconnect() async
-      func send(event: NodeEvent) async throws
-      func handle(command: NodeCommand) async -> NodeResult
-  }
-  ```
-- [ ] Bonjour服务发现 (`NetServiceBrowser`)
-  - 发现局域网内OpenClaw Gateway
-  - 自动填充连接配置
-- [ ] 配对流程实现
-  - 生成/显示配对码
-  - 调用 `/pair` 和 `/pair approve`
-  - 存储配对凭证 (Keychain)
-- [ ] Node能力注册 (`node.describe`)
-  - 返回支持的命令列表
-  - 返回权限状态
+- [ ] **2.1.3** 配对与认证
+  - Bonjour服务发现
+  - 配对流程 (setup code → approve)
+  - Token存储 (Keychain)
+  - 依赖: 2.1.1
+  - 产出: `PairingService.swift`, `KeychainStore.swift`
 
-**交付物**:
-- iOS App成功注册为Node
-- 在OpenClaw Gateway中显示为已连接设备
-- 配对流程完整跑通
+- [ ] **2.1.4** 标准Camera命令
+  - `camera.list`, `camera.snap`, `camera.clip`
+  - 参考OpenClaw实现，但不直接复制
+  - 依赖: 2.1.2
+  - 产出: `CameraCommandHandler.swift`
 
-**关键检查点** ✅:
-- [ ] LokmEye SKILL 可被OpenClaw加载
-- [ ] iOS App成功注册为Node
-- [ ] 两端WebSocket连接稳定
+- [ ] **2.1.5** 【关键】AR架构预留 (IC0)
+  - 定义 `ARInterface` 协议 (供David实现)
+  - 预留AR层调用点（检测反馈、命令触发）
+  - 相机共享协议设计 (ARSession vs AVCaptureSession)
+  - **产出**: `ARInterface.swift` (协议定义), 架构文档
+  - **阻塞David进场**: 必须在Week 1结束完成
 
----
+**Week 2-3: Vision Engine + AR集成**
+- [ ] **2.2.1** 相机预览与采集
+  - AVCaptureSession管理
+  - 实时帧获取 (CVPixelBuffer)
+  - 依赖: 2.1.4
+  - 产出: `CameraCaptureService.swift`
 
-### 2.2 里程碑 M4: 相机与检测命令 (Week 2)
+- [ ] **2.2.2** 人形检测 (VN)
+  - VNDetectHumanRectanglesRequest
+  - 边界框转换 (normalized coordinates)
+  - 依赖: 2.2.1
+  - 产出: `PersonDetector.swift`
 
-**目标**: 实现SKILL命令集和基础检测能力
+- [ ] **2.2.3** 运动检测
+  - 帧差法 / 光流算法
+  - 运动区域计算
+  - 依赖: 2.2.1
+  - 产出: `MotionDetector.swift`
 
-#### 2.2.1 SKILL命令定义 (SKILL.md)
+- [ ] **2.2.4** Vision命令处理器
+  - `lokmeye.vision.start/stop/status`
+  - 检测配置应用 (threshold, ROI)
+  - 依赖: 2.1.2, 2.2.2, 2.2.3
+  - 产出: `VisionCommandHandler.swift`
 
-**新增命令**:
+**Week 3-4: 事件与优化**
+- [ ] **2.3.1** 事件发射器
+  - 主动推送事件到Gateway (扩展协议)
+  - 事件队列与重传
+  - 依赖: 2.1.1
+  - 产出: `EventEmitter.swift`
 
-| 命令 | 参数 | 返回值 | 说明 |
-|------|------|--------|------|
-| `lokmeye.camera.snap` | `camera?: front\|back`, `quality?: high\|medium\|low` | `{image: base64, timestamp, metadata}` | 拍照 |
-| `lokmeye.camera.clip` | `duration: number`, `camera?` | `{video: base64, timestamp}` | 录视频片段 |
-| `lokmeye.camera.list` | - | `[{id, name, position, available}]` | 列出相机 |
-| `lokmeye.detection.start` | `mode: person\|motion\|all`, `config?: DetectionConfig` | `{sessionId, status}` | 开始检测 |
-| `lokmeye.detection.stop` | `sessionId` | `{status}` | 停止检测 |
-| `lokmeye.detection.status` | - | `{running, mode, uptime, eventsCount}` | 检测状态 |
+- [ ] **2.3.2** 本地配置管理
+  - 配置持久化 (UserDefaults/JSON)
+  - 运行时配置更新
+  - 依赖: 2.2.4
+  - 产出: `ConfigManager.swift`
 
-**DetectionConfig Schema**:
+- [ ] **2.3.3** 后台保活
+  - Location更新触发检测
+  - 省电模式切换
+  - 依赖: 2.2.4
+  - 产出: `BackgroundTaskManager.swift`
+
+- [ ] **2.3.4** iOS UI (简化版)
+  - 连接状态显示
+  - 实时预览 (可选)
+  - 设置页面
+  - 依赖: 2.1.3
+  - 产出: `ContentView.swift`, `SettingsView.swift`
+
+**Week 4-5: 集成与测试**
+- [ ] **2.4.1** 端到端联调
+  - 与Bob的SKILL对接
+  - 命令-响应完整测试
+  - 依赖: 2.1.2, 2.2.4, 3.1.1
+
+- [ ] **2.4.2** 性能优化
+  - 内存优化 (< 150MB)
+  - 电池优化 (8小时续航)
+  - FPS稳定性
+
+- [ ] **2.4.3** 错误处理与边界情况
+  - 网络断开恢复
+  - 权限拒绝处理
+  - 相机占用冲突
+
+#### David (AR Graphics Engineer) - 约 3.5周工作量
+
+**与Alex的协作模式**：
+- **AR是主UI**，David负责核心交互层，Alex负责后台数据层
+- 架构预留：Alex Week 1定义ARInterface协议，David Week 2实现
+- 数据流：Vision检测结果 → ARInterface → Matrix猫头反馈（情绪/状态）
+- 用户流：用户与猫头交互 → ARInterface → Node命令 → Gateway
+
+**David入场时间：Week 2（Alex架构预留完成后）**
+
+**Week 2-3: Matrix猫头核心UI**
+- [ ] **4.1.1** Matrix数字雨着色器 (Metal)
+  - 顶点着色器：字符位置矩阵变换
+  - 片段着色器：绿色荧光 + 数字纹理采样 + 时间uniform
+  - 噪声纹理生成（随机数字列）
+  - 依赖: 无
+  - 产出: `MatrixRainShader.metal`
+
+- [ ] **4.1.2** 程序化猫头轮廓生成
+  - 使用SceneKit/RealityKit几何体构建猫头形状
+  - UV映射适配数字雨纹理
+  - 边缘高亮材质（Fresnel效果）
+  - 依赖: 4.1.1
+  - 产出: `CatHeadGeometry.swift`
+
+- [ ] **4.1.3** RealityKit自定义材质系统
+  - 将Metal着色器应用到RealityKit实体
+  - 动态uniform更新（时间、速度）
+  - 性能优化（GPU Instancing）
+  - 依赖: 4.1.1, 4.1.2
+  - 产出: `MatrixMaterial.swift`
+
+- [ ] **4.1.4** 主AR界面搭建（核心UI）
+  - ARView配置（World Tracking或Face Tracking）
+  - **Matrix猫头始终显示在屏幕中央**
+  - 环境光照估计
+  - 相机背景渲染
+  - 依赖: 无
+  - 产出: `AREyeInterface.swift`（主UI层）
+
+**Week 2-3: 主UI交互系统**
+- [ ] **4.2.1** ARKit空间追踪集成
+  - ARWorldTrackingConfiguration配置
+  - 平面检测（放置猫头于现实世界）
+  - 或Face Tracking模式（猫头跟随人脸）
+  - 依赖: 4.1.4
+  - 产出: `ARTrackingManager.swift`
+
+- [ ] **4.2.2** 平滑旋转与物理效果
+  - 球面线性插值（Slerp）平滑旋转
+  - 弹簧物理系统（惯性回弹）
+  - 最大角度限制（Yaw ±60°, Pitch ±45°）
+  - 依赖: 4.2.1
+  - 产出: `CatPhysicsController.swift`
+
+- [ ] **4.2.3** 视觉反馈系统
+  - 眨眼检测 → 眼睛高亮闪烁
+  - 距离感知 → 数字雨速度变化
+  - 检测触发 → 猫头出现/消失动画
+  - 依赖: 4.2.1, Alex的2.2.2
+  - 产出: `ARFeedbackSystem.swift`
+
+**Week 3-4: 与监控系统集成**
+- [ ] **4.3.1** AR状态反馈系统（主UI反馈后台状态）
+  - Vision检测结果 → 猫头情绪/颜色变化
+  - 连接状态 → 猫头眼神/亮度反馈
+  - 系统状态 → 猫头旋转速度/数字雨密度
+  - 依赖: Alex的2.2.2, 4.2.1
+  - 产出: `AREyeFeedback.swift`
+
+- [ ] **4.3.2** 扩展交互与功能
+  - 长按猫头 → 快捷菜单
+  - 双击猫头 → 拍照/录像
+  - 语音唤醒 → 猫头激活动画
+  - 依赖: 4.3.1
+  - 产出: `AREyeInteractions.swift`
+
+- [ ] **4.3.3** AR录制与分享（内容创作）
+  - RealityKit屏幕录制（带猫头）
+  - AR场景+真实背景合成
+  - 社交媒体分享
+  - 依赖: 4.3.2
+  - 产出: `AREyeRecorder.swift`
+
+- [ ] **4.3.4** 性能优化与适配
+  - iPhone 12以下机型降级方案（简化效果）
+  - 帧率稳定60FPS（UI流畅度）
+  - 内存占用控制
+  - 依赖: 4.3.1-4.3.3
+  - 产出: `AREyeOptimizer.swift`
+
+**Week 4-5: 集成与打磨**
+- [ ] **4.4.1** 与Alex主App集成
+  - Swift Package Manager集成
+  - 相机共享协调（ARSession vs AVCaptureSession）
+  - 生命周期管理（前后台切换）
+  - 依赖: Alex的2.3.4, 4.3.4
+
+- [ ] **4.4.2** AR命令实现
+  - `lokmeye.ar.start` - 启动AR预览
+  - `lokmeye.ar.stop` - 停止AR预览
+  - `lokmeye.ar.record` - 录制AR场景
+  - 依赖: Alex的2.1.2, 4.4.1
+  - 产出: `ARCommandHandler.swift`
+
+- [ ] **4.4.3** UI/UX打磨
+  - AR模式切换UI
+  - 手势控制（缩放、旋转猫头）
+  - 视觉效果调优（Bloom、泛光）
+  - 依赖: 4.4.1
+  - 产出: `ARUIOverlay.swift`
+
+#### Bob (Backend/SKILL) - 约 3.5周工作量
+
+**Week 1: Gateway配置与SKILL框架**
+- [ ] **3.1.1** LokmEye SKILL框架
+  - `SKILL.md` 基础定义
+  - 命令映射到 `nodes.invoke`
+  - 依赖: 无
+  - 产出: `skills/lokmeye/SKILL.md`
+
+- [ ] **3.1.2** Gateway Webhook配置
+  - 配置事件接收端点
+  - 事件过滤与转发
+  - 依赖: 无
+  - 产出: `gateway-webhook-config.md`
+
+- [ ] **3.1.3** 标准命令包装
+  - `/lokmeye camera snap` → `nodes camera snap`
+  - `/lokmeye camera list` → `nodes camera list`
+  - 依赖: 3.1.1
+  - 产出: `skills/lokmeye/tools/camera.ts`
+
+**Week 2: Vision命令与事件处理**
+- [ ] **3.2.1** Vision命令包装
+  - `/lokmeye vision start` → `nodes invoke lokmeye.vision.start`
+  - `/lokmeye vision stop` → `nodes invoke lokmeye.vision.stop`
+  - `/lokmeye vision status`
+  - 依赖: 3.1.1, Alex的2.2.4
+  - 产出: `skills/lokmeye/tools/vision.ts`
+
+- [ ] **3.2.2** 事件接收处理
+  - Webhook接收 `lokmeye.event.*`
+  - 事件解析与存储
+  - 依赖: 3.1.2, Alex的2.3.1
+  - 产出: `skills/lokmeye/events/handler.ts`
+
+- [ ] **3.2.3** 通知集成
+  - 事件 → APNs推送
+  - 推送内容格式化
+  - 依赖: 3.2.2
+  - 产出: `skills/lokmeye/notifications.ts`
+
+**Week 3: 工作流与配置**
+- [ ] **3.3.1** 一键监控工作流
+  - `/lokmeye monitor start` 命令
+  - 启动检测 + 订阅事件 + 配置通知
+  - 依赖: 3.2.1, 3.2.3
+  - 产出: `skills/lokmeye/workflows/monitor.ts`
+
+- [ ] **3.3.2** 配置管理
+  - `/lokmeye config set` 命令
+  - 配置下发到iOS Node
+  - 依赖: 3.2.1
+  - 产出: `skills/lokmeye/tools/config.ts`
+
+- [ ] **3.3.3** 统计与报告
+  - `/lokmeye stats` 命令
+  - 事件统计查询
+  - 依赖: 3.2.2
+  - 产出: `skills/lokmeye/tools/stats.ts`
+
+**Week 4: 高级功能**
+- [ ] **3.4.1** 确认反馈机制
+  - 推送通知带确认按钮
+  - 确认结果回传到iOS
+  - 依赖: 3.2.3, 3.3.1
+  - 产出: `skills/lokmeye/feedback.ts`
+
+- [ ] **3.4.2** 智能分析集成
+  - 调用LLM分析异常模式
+  - 生成自然语言报告
+  - 依赖: 3.2.2
+  - 产出: `skills/lokmeye/analysis.ts`
+
+- [ ] **3.4.3** 场景模板
+  - 门口/客厅/车库预设配置
+  - 一键切换场景
+  - 依赖: 3.3.2
+  - 产出: `skills/lokmeye/templates/*.json`
+
+#### Carol (Product/QA) - 全程并行
+
+**持续进行**:
+- [ ] 编写用户故事和验收标准
+- [ ] 设计测试用例 (功能/性能/边界)
+- [ ] 进行手动测试和验收
+- [ ] 编写用户文档和快速入门指南
+- [ ] 收集用户反馈并创建Issue
+
+**关键节点**:
+- Week 1结束: 确认Node协议接口定义
+- Week 2结束: 确认Vision检测准确性标准
+- Week 3结束: 确认事件流完整性
+- Week 4结束: MVP验收测试
+- Week 5结束: 完整产品验收
+
+### 2.3 协作接口与依赖
+
+#### 接口契约 (关键同步点)
+
+**IC0: AR架构契约 (Week 1结束，阻塞David进场)**
+```swift
+// Alex定义 → David实现
+protocol ARInterface: AnyObject {
+    // 系统状态反馈到AR层
+    func showConnectionState(_ state: ConnectionState)
+    func showDetectionAlert(_ event: DetectionEvent)
+    func showSystemStatus(_ status: SystemStatus)
+    
+    // AR层触发系统命令
+    var onVoiceCommand: ((String) -> Void)? { get set }
+    var onGesture: ((GestureType) -> Void)? { get set }
+    var onStatusTap: (() -> Void)? { get set }
+}
+
+// 数据模型
+struct DetectionEvent {
+    let type: DetectionType
+    let confidence: Double
+    let position: SIMD3<Float>?  // AR空间位置
+}
+
+enum ConnectionState {
+    case connecting, connected, disconnected, error
+}
+
+// 相机共享协议
+defaultCameraMode: .arPriority  // AR优先，Vision后台运行
+```
+
+**IC1: Node协议基础 (Week 1结束)**
 ```typescript
-interface DetectionConfig {
-  personConfidence?: number;      // 人形置信度阈值 (0-1)
-  motionThreshold?: number;       // 运动检测阈值
-  detectionRegion?: BoundingBox;  // 检测区域 (归一化坐标)
-  cooldownMs?: number;            // 事件冷却时间
-  maxFPS?: number;                // 最大处理帧率
+// Alex提供: Swift结构
+struct NodeDescription {
+    commands: [String]      // 支持的命令列表
+    capabilities: [String]  // 能力标识
+    version: String         // 协议版本
 }
+
+// Bob依赖: 用于SKILL命令定义
 ```
 
-#### 2.2.2 iOS Node命令处理器
-
-**任务清单**:
-- [ ] 实现 `CameraCommandHandler`
-  - `camera.snap`: 拍照 → Base64编码 → 返回
-  - `camera.clip`: 录制 → 临时文件 → Base64 → 返回
-  - `camera.list`: 查询AVCaptureDevice
-- [ ] 实现 `DetectionCommandHandler`
-  - `detection.start`: 启动Vision检测循环
-  - `detection.stop`: 停止检测循环
-  - 配置实时应用（无需重启）
-- [ ] 权限检查中间件
-  - 相机权限未授权时返回 `PERMISSION_MISSING`
-  - 包含权限申请引导
-
-#### 2.2.3 事件上报机制
-
-**事件类型**:
-
-| 事件 | 字段 | 说明 |
-|------|------|------|
-| `lokmeye.event.person_detected` | `timestamp`, `confidence`, `boundingBox`, `thumbnail` | 人形检测 |
-| `lokmeye.event.motion_detected` | `timestamp`, `region`, `intensity`, `thumbnail` | 运动检测 |
-| `lokmeye.event.camera_error` | `error`, `timestamp` | 相机错误 |
-| `lokmeye.event.detection_started` | `mode`, `timestamp` | 检测启动 |
-| `lokmeye.event.detection_stopped` | `timestamp`, `reason` | 检测停止 |
-
-**上报策略**:
-- 实时上报（WebSocket连接正常时）
-- 本地队列缓存（断网时）
-- 批量重传（恢复连接后）
-
-**交付物**:
-- 完整的SKILL命令实现
-- 命令处理器单元测试
-- 事件上报端到端测试
-
-**关键检查点** ✅:
-- [ ] Telegram/WhatsApp中输入 `/lokmeye camera snap` 触发iOS拍照
-- [ ] 检测到人物时收到OpenClaw消息通知
-- [ ] 断网恢复后事件自动补传
-
----
-
-### 2.3 里程碑 M5: 智能工作流 (Week 3-4)
-
-**目标**: 实现智能分析和工作流编排
-
-#### 2.3.1 高级SKILL命令
-
-| 命令 | 说明 |
-|------|------|
-| `lokmeye.monitor` | 一键启动监控（包含检测+上报+通知） |
-| `lokmeye.analyze` | 分析最近N个事件（调用LLM生成报告） |
-| `lokmeye.alert.config` | 配置告警规则 |
-| `lokmeye.stats` | 查看检测统计 |
-| `lokmeye.snapshot` | 获取当前实时画面 |
-
-#### 2.3.2 工作流编排示例
-
-**场景1: 简单监控模式**
-```
-用户: /lokmeye monitor start
-OpenClaw:
-  1. 发送 detection.start 到 iOS Node
-  2. 订阅 lokmeye.event.* 事件
-  3. 收到 person_detected:
-     - 发送APNs推送通知用户
-     - 保存事件到本地存储
-     - 等待用户确认
-```
-
-**场景2: 智能分析**
-```
-用户: /lokmeye analyze last-hour
-OpenClaw:
-  1. 查询最近1小时事件
-  2. 调用LLM分析异常模式
-  3. 生成报告并发送给用户
-```
-
-#### 2.3.3 配置同步机制
-
-**配置层级**:
-```
-1. OpenClaw Gateway配置 (最高优先级)
-   ~/.openclaw/openclaw.json → agents.*.skills.lokmeye
-   
-2. SKILL运行时配置
-   通过 node.invoke 下发到iOS
-   
-3. iOS本地缓存
-   断网时使用最后同步的配置
-```
-
-**同步触发时机**:
-- Node连接时自动同步
-- 配置变更时实时推送
-- 每5分钟心跳同步
-
-**交付物**:
-- 完整工作流实现
-- 配置同步文档
-- 性能基准测试
-
-**关键检查点** ✅:
-- [ ] `/lokmeye monitor start` 一键启动完整监控
-- [ ] 配置变更实时生效
-- [ ] 7x24小时稳定性测试通过
-
----
-
-## 3. Phase 3: 闭环优化与产品化
-
-**目标**: 实现完整闭环反馈和产品级体验  
-**时间**: 2-3周  
-**状态**: 🔴 Not Started
-
-### 3.1 里程碑 M6: 确认反馈与学习 (Week 1)
-
-**目标**: 建立事件确认-反馈-优化闭环
-
-#### 3.1.1 事件确认流程
-
-**用户交互流程**:
-```
-1. iOS检测到人物 → 上报OpenClaw
-2. OpenClaw发送APNs推送:
-   "👁️ LokmEye: 检测到人物 [缩略图]
-    [确认正常] [确认异常] [误报]"
-3. 用户点击按钮 → 回传确认结果
-4. OpenClaw记录反馈
-```
-
-**SKILL命令**:
-- `lokmeye.event.confirm` - 确认事件
-- `lokmeye.event.dismiss` - 忽略事件
-- `lokmeye.event.false_positive` - 标记误报
-
-#### 3.1.2 智能降噪
-
-**去重策略**:
-- 空间去重：同一区域内事件合并
-- 时间去重：5秒内同类事件合并
-- 置信度去重：只保留最高置信度
-
-**动态阈值调整**:
+**IC2: Camera命令 (Week 2开始)**
 ```typescript
-// 基于反馈自动调整
-if (falsePositiveRate > 0.3) {
-  config.personConfidence += 0.1;  // 提高阈值
-}
-if (missRate > 0.2) {
-  config.personConfidence -= 0.05; // 降低阈值
-}
+// 标准命令 (复用OpenClaw)
+camera.list → {devices: [{id, name, position}]}
+camera.snap → {format, base64, width, height}
+camera.clip → {format, base64, durationMs, hasAudio}
 ```
 
-**时间规则**:
-- 夜间模式 (22:00-06:00): 高灵敏度
-- 白天模式 (06:00-22:00): 标准灵敏度
-- 可自定义时间段规则
-
-**交付物**:
-- 事件确认UI/UX
-- 智能降噪算法
-- 反馈数据统计
-
-**关键检查点** ✅:
-- [ ] 用户可收到推送并确认事件
-- [ ] 误报率随使用降低
-- [ ] 事件去重准确率 > 95%
-
----
-
-### 3.2 里程碑 M7: 协同优化 (Week 2)
-
-**目标**: OpenClaw调度优化与省电策略
-
-#### 3.2.1 协同省电策略
-
-**OpenClaw调度决策**:
+**IC3: Vision命令 (Week 3开始)**
 ```typescript
-enum PowerMode {
-  HIGH,    // 30 FPS, 全检测
-  BALANCED,// 15 FPS, 人形检测
-  LOW,     // 5 FPS, 运动检测
-  SLEEP    // 1 FPS/分钟, 仅心跳
-}
+// 自定义命令
+lokmeye.vision.start(params: {
+    mode: 'person' | 'motion' | 'all'
+    confidence?: number
+    threshold?: number
+    region?: BoundingBox
+}) → {sessionId, status}
 
-// 自动调度逻辑
-if (noEventFor(30min)) → switchTo(LOW)
-if (userAway) → switchTo(SLEEP)
-if (eventDetected) → switchTo(HIGH)
+lokmeye.vision.stop(sessionId) → {status}
+lokmeye.vision.status() → {running, mode, eventsCount}
 ```
 
-**iOS实现**:
-- 帧率动态调整 (`videoMinFrameDuration`)
-- 检测器动态切换（运动检测优先）
-- 后台保活策略（Location更新触发）
-
-#### 3.2.2 网络优化
-
-**传输优化**:
-- 缩略图WebP压缩（比JPEG小30%）
-- 渐进式上传（先传缩略图，再传原图）
-- 批量上报（5个事件一起发送）
-
-**断网处理**:
-- 指数退避重连（1s → 2s → 4s → ... → 60s）
-- 本地SQLite缓存（最多7天）
-- 恢复后优先级队列（紧急事件优先）
-
-**交付物**:
-- 省电模式实现
-- 网络优化方案
-- 性能监控数据
-
-**关键检查点** ✅:
-- [ ] 低功耗模式下续航 > 8小时
-- [ ] 断网恢复后100%事件补传
-- [ ] 内存占用 < 150MB
-
----
-
-### 3.3 里程碑 M8: 配置中心 (Week 3)
-
-**目标**: 多设备管理与可视化配置
-
-#### 3.3.1 Web UI配置中心
-
-**功能模块**:
-- 设备列表（多个LokmEye iOS设备）
-- 实时预览（Canvas显示当前画面）
-- ROI设置（可视化绘制检测区域）
-- 规则引擎（IF-THEN配置）
-- 事件时间线（筛选/搜索/导出）
-
-#### 3.3.2 场景模板
-
-**预设模板**:
-- 门口监控: 检测人形，高灵敏度，24小时
-- 客厅监控: 检测运动+人形，中灵敏度，仅夜间
-- 车库监控: 检测运动，低灵敏度，仅检测时段
-
-#### 3.3.3 SKILL版本管理
-
-- ClawHub发布流程
-- 版本兼容性检查
-- 自动更新机制
-
-**交付物**:
-- Web配置中心
-- 场景模板系统
-- SKILL发布到ClawHub
-
-**关键检查点** ✅:
-- [ ] 可视化配置ROI
-- [ ] 多设备统一管理
-- [ ] SKILL在ClawHub可下载
-
----
-
-## 4. 时间线与里程碑总览
-
-### 4.1 甘特图
-
-```
-Week:    | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
-         ├───┼───┼───┼───┼───┼───┼───┤
-Phase 2
-  M3     ████                                    基础框架
-  M4         ████                               相机命令
-  M5             ████████                       智能工作流
-Phase 3
-  M6                     ████                   确认反馈
-  M7                         ████               协同优化
-  M8                             ████           配置中心
-         └───────────────────────────────────┘
-               MVP可用 (Week 5)   完整产品 (Week 8)
-```
-
-### 4.2 关键交付节点
-
-| 日期 | 里程碑 | 交付物 | 验收标准 |
-|------|--------|--------|----------|
-| Week 1 | M3 | Node连接 + SKILL框架 | iOS显示为已连接Node |
-| Week 2 | M4 | 相机命令 + 事件上报 | Telegram可触发拍照 |
-| Week 4 | M5 | 工作流 + 配置同步 | `/monitor`一键启动 |
-| Week 5 | **MVP** | 可用监控系统 | 检测→上报→通知完整闭环 |
-| Week 6 | M6 | 确认反馈机制 | 用户可确认/误报事件 |
-| Week 7 | M7 | 省电优化 | 8小时续航 |
-| Week 8 | M8 | 配置中心 | Web可视化配置 |
-
----
-
-## 5. 人员配置与分工
-
-### 5.1 推荐配置 (3-4人)
-
-| 角色 | 人数 | 核心职责 | 技能要求 |
-|------|------|----------|----------|
-| **OpenClaw工程师** | 1 | SKILL开发 + Gateway集成 | Node.js/TS, OpenClaw架构, SKILL规范 |
-| **iOS Node工程师** | 1 | Node客户端 + 通信层 | Swift, Combine, WebSocket, Bonjour |
-| **视觉工程师** | 1 | AVFoundation + Vision优化 | Core ML, 实时视频, 性能调优 |
-| **产品/QA** | 1 | 需求 + 验收 + 文档 | 监控场景理解, iOS测试, 用户研究 |
-
-### 5.2 详细分工
-
-#### OpenClaw工程师 (Alice)
-
-**Phase 2**:
-- Week 1: SKILL.md定义, 前置条件检查
-- Week 2: 命令实现, 事件处理逻辑
-- Week 3-4: 工作流编排, 配置同步
-
-**Phase 3**:
-- Week 5: 确认反馈流程, 数据统计
-- Week 6: 省电调度策略
-- Week 7: Web配置中心后端
-
-**产出物**:
-- `skills/lokmeye/` 目录
-- 命令处理器代码
-- 工作流编排逻辑
-
-#### iOS Node工程师 (Bob)
-
-**Phase 2**:
-- Week 1: GatewayNodeClient, Bonjour, 配对
-- Week 2: CameraCommandHandler, DetectionCommandHandler
-- Week 3-4: 事件上报, 配置应用, 后台保活
-
-**Phase 3**:
-- Week 5: APNs推送处理, 确认UI
-- Week 6: 省电模式实现, 帧率控制
-- Week 7: Web配置中心前端(iOS端)
-
-**产出物**:
-- `apps/LokmEye-iOS/` 扩展
-- `core/` 中Node相关代码
-- 通信协议实现
-
-#### 视觉工程师 (Carol)
-
-**Phase 2**:
-- Week 1-2: Vision检测优化, 多线程处理
-- Week 3-4: 性能调优, 电池优化
-
-**Phase 3**:
-- Week 5: 本地LLM推理 (Core ML)
-- Week 6: 智能抽帧, 动态分辨率
-
-**产出物**:
-- `LokmVision/` 模块
-- 性能基准测试报告
-- 电池消耗优化方案
-
-#### 产品/QA (David)
-
-**全程**:
-- 需求澄清与验收标准定义
-- 编写测试用例
-- 用户测试与反馈收集
-- 文档编写 (用户手册, API文档)
-
-### 5.3 协作机制
-
-**每日站会** (15分钟):
-- 昨日进展
-- 今日计划
-- 阻塞问题
-
-**每周Review**:
-- Demo本周成果
-- 调整下周计划
-- 技术决策确认
-
-**接口契约** (关键节点):
-- Week 1结束: SKILL.md接口定义冻结
-- Week 2结束: 命令格式版本锁定
-- Week 4结束: 事件Schema版本锁定
-
----
-
-## 6. 技术规范
-
-### 6.1 代码规范
-
-**OpenClaw (TypeScript)**:
-- 遵循OpenClaw AGENTS.md规范
-- 使用 `pnpm check` 检查
-- 测试覆盖 > 70%
-
-**iOS (Swift)**:
-- Swift 5.9+
-- 使用 `@Observable` 替代 `ObservableObject`
-- 4空格缩进
-- 文件长度 < 700行
-
-### 6.2 接口规范
-
-**WebSocket消息格式**:
+**IC4: 事件格式 (Week 3开始)**
 ```typescript
-// 命令请求
-interface NodeCommand {
-  id: string;
-  type: 'command';
-  skill: 'lokmeye';
-  action: string;
-  params: Record<string, unknown>;
-  timestamp: number;
-}
-
-// 命令响应
-interface NodeResult {
-  commandId: string;
-  status: 'success' | 'error';
-  data?: unknown;
-  error?: {
-    code: string;
-    message: string;
-  };
-}
-
-// 事件上报
-interface NodeEvent {
-  type: 'event';
-  skill: 'lokmeye';
-  eventType: string;
-  payload: unknown;
-  timestamp: number;
+// Alex发送, Bob接收
+interface LokmeyeEvent {
+    type: 'lokmeye.person_detected' | 'lokmeye.motion_detected'
+    timestamp: string
+    payload: {
+        confidence: number
+        boundingBox?: {x, y, width, height}
+        thumbnail?: string  // base64, webp
+        camera: 'front' | 'back'
+    }
 }
 ```
 
-### 6.3 事件Schema (v1.0)
-
-**person_detected**:
+**IC5: 配置Schema (Week 2结束)**
 ```typescript
+interface LokmeyeConfig {
+    detection: {
+        mode: 'person' | 'motion' | 'all'
+        confidence: number      // 0-1
+        threshold: number       // 运动阈值
+        cooldownMs: number      // 事件冷却
+        maxFPS: number          // 最大帧率
+    }
+    region?: BoundingBox        // 检测区域
+    powerMode: 'high' | 'balanced' | 'low'
+}
+```
+
+**IC6: AR检测桥接 (Week 3开始)**
+```swift
+// Alex提供检测事件 → David消费
+struct VisionDetectionEvent {
+    let type: DetectionType  // .person, .motion
+    let boundingBox: CGRect  // 归一化坐标 (0-1)
+    let confidence: Double
+    let timestamp: Date
+    let depth: Float?        // AR深度信息 (如果可用)
+}
+
+// David提供AR状态 → Alex查询
+struct ARSessionState {
+    let isRunning: Bool
+    let trackingState: ARTrackingState
+    let cameraMode: ARCameraMode  // .arSession or .avCapture
+}
+```
+
+**IC7: AR命令 (Week 4开始)**
+```typescript
+// 新增AR命令
+lokmeye.ar.start(params: {
+    mode: 'world' | 'face' | 'off'
+    showOnDetection: boolean  // 检测到时自动显示
+}) → {status, sessionId}
+
+lokmeye.ar.stop(sessionId) → {status}
+
+lokmeye.ar.record(params: {
+    duration?: number
+    quality: 'high' | 'medium' | 'low'
+}) → {videoBase64}
+```
+
+**IC8: 相机共享协议 (Week 2结束)**
+```swift
+// Alex和David协调相机使用
+enum CameraMode {
+    case visionOnly      // 仅监控模式
+    case arOnly          // 仅AR预览模式
+    case hybrid          // 混合模式（AR优先，间歇检测）
+}
+
+// 相机切换时序
+// 1. AR启动时 → Alex暂停AVCapture，David启动ARSession
+// 2. AR关闭时 → David停止ARSession，Alex恢复AVCapture
+// 3. Hybrid模式 → ARSession运行，Vision从ARFrame获取图像
+```
+
+#### 依赖关系图
+
+```
+Week 1:
+  Alex:  2.1.1 → 2.1.2 → 2.1.3 → 2.1.4
+  David: 4.1.1 → 4.1.2 → 4.1.3 → 4.1.4
+  Bob:   3.1.1 → 3.1.2 → 3.1.3
+  
+Week 2:
+  Alex:  2.2.1 → 2.2.2 → 2.2.3 → 2.2.4
+         ↓              ↑
+  David: 4.2.1 → 4.2.2 → 4.2.3
+         ↓ (IC8相机协议)
+  Bob:   3.2.1 (依赖 Alex 2.2.4)
+  
+Week 3:
+  Alex:  2.3.1 → 2.3.2 → 2.3.3 → 2.3.4
+         ↓ (IC6检测事件) ↓
+  David: 4.3.1 → 4.3.2 → 4.3.3 → 4.3.4
+                ↑
+  Bob:   3.2.2 (依赖 Alex 2.3.1)
+         3.2.3 (依赖 Alex 2.3.1)
+         3.3.1 (依赖 Alex 2.2.4, 2.3.1)
+         
+Week 4:
+  Alex:  2.4.1 → 2.4.2 → 2.4.3
+         ↑      ↑ (IC7 AR命令)
+  David: 4.4.1 → 4.4.2 → 4.4.3
+         ↑
+  Bob:   3.3.2 → 3.3.3 → 3.4.1 → 3.4.2 → 3.4.3
+         
+Week 5:
+  联合测试与Bug修复
+  AR-MVP验收 (David 4.3.x 完成)
+```
+
+---
+
+## 3. Phase 详细规划
+
+### Phase 1: Node Client 基础设施 (Week 1-2)
+
+**目标**: 建立与OpenClaw Gateway的稳定连接，实现标准Camera命令
+
+#### Week 1 详细任务
+
+**Alex - Day 1-2: WebSocket与Node协议**
+```swift
+// NodeProtocol.swift
+protocol NodeProtocol {
+    func connect(to url: URL) async throws
+    func disconnect() async
+    func sendEvent(_ event: NodeEvent) async throws
+}
+
+// NodeClient.swift (Actor)
+actor NodeClient: NodeProtocol {
+    private var webSocketTask: URLSessionWebSocketTask?
+    private var commandHandlers: [String: CommandHandler] = [:]
+    
+    func handleIncomingMessage(_ message: String) async {
+        // 解析JSON-RPC
+        // 路由到对应handler
+    }
+}
+```
+
+**验收标准**:
+- [ ] 成功连接到Gateway
+- [ ] 发送`node.describe`得到正确响应
+- [ ] 心跳保活正常
+
+**Alex - Day 3-4: 配对与认证**
+```swift
+// PairingService.swift
+actor PairingService {
+    func startPairing() async throws -> String  // 返回setup code
+    func completePairing(with token: String) async throws
+    func storeToken(_ token: String) throws  // Keychain
+    func retrieveToken() throws -> String?
+}
+```
+
+**验收标准**:
+- [ ] Bonjour发现Gateway
+- [ ] 生成setup code
+- [ ] 用户approve后保存token
+- [ ] 断开后用token自动重连
+
+**Alex - Day 5: Camera基础**
+- 实现`camera.list` (列出设备)
+- 实现`camera.snap`基础版 (拍照返回base64)
+
+**Bob - Day 1-2: SKILL框架**
+```markdown
+// skills/lokmeye/SKILL.md
+---
+name: lokmeye
+description: LokmEye智能监控
+metadata:
+  openclaw:
+    emoji: 👁️
+    requires:
+      node: ios
+      capabilities: [lokmeye.vision]
+---
+
+## 命令
+
+- `/lokmeye camera snap` - 拍照
+- `/lokmeye camera list` - 列出摄像头
+```
+
+**Bob - Day 3-5: Gateway配置**
+```typescript
+// gateway-webhook-config.md
 {
-  eventType: 'lokmeye.person_detected',
-  timestamp: '2026-02-27T10:30:00Z',
-  payload: {
-    confidence: 0.92,           // 0-1
-    boundingBox: {              // 归一化坐标
-      x: 0.25, y: 0.30,
-      width: 0.30, height: 0.50
-    },
-    thumbnail: 'base64...',     // WebP, max 100KB
-    camera: 'back',             // front/back
-    processingTimeMs: 45        // 处理耗时
+  "gateway": {
+    "webhooks": [{
+      "events": ["node.event.lokmeye.*"],
+      "url": "http://localhost:8080/webhook/lokmeye"
+    }]
   }
 }
 ```
 
+#### Week 2 详细任务
+
+**Alex - Vision Engine基础**
+- Day 1-2: CameraCaptureService (实时帧获取)
+- Day 3-4: PersonDetector (VN实现)
+- Day 5: MotionDetector (帧差法)
+
+**验收标准**:
+- [ ] 实时预览帧率 > 15 FPS
+- [ ] 人形检测延迟 < 200ms
+- [ ] 运动检测误报率 < 10%
+
+**Bob - Camera命令包装**
+```typescript
+// tools/camera.ts
+export async function snap(nodeId: string, facing?: string) {
+  return await nodesTool.execute({
+    action: "camera_snap",
+    node: nodeId,
+    facing: facing || "front"
+  });
+}
+```
+
+### Phase 2: Vision与事件流 (Week 2-3)
+
+**目标**: 实现检测能力和事件主动上报
+
+#### Week 3 详细任务
+
+**Alex - Vision命令与事件**
+- Day 1: `lokmeye.vision.start/stop/status` 命令
+- Day 2: EventEmitter (主动推送)
+- Day 3: 配置管理 (`lokmeye.config.set/get`)
+- Day 4: 后台保活 (Location策略)
+- Day 5: iOS UI (简化版)
+
+**关键代码 - EventEmitter**:
+```swift
+actor EventEmitter {
+    private var eventQueue: [LokmeyeEvent] = []
+    private var webSocket: URLSessionWebSocketTask?
+    
+    func emit(_ event: LokmeyeEvent) async {
+        if isConnected {
+            await sendImmediate(event)
+        } else {
+            queueForLater(event)
+        }
+    }
+    
+    private func sendImmediate(_ event: LokmeyeEvent) async {
+        let message = try! JSONEncoder().encode(event)
+        try? await webSocket?.send(.string(String(data: message, encoding: .utf8)!))
+    }
+}
+```
+
+**Bob - Vision命令与事件处理**
+- Day 1-2: Vision命令包装
+- Day 3: Webhook接收器
+- Day 4: 事件解析与存储
+- Day 5: APNs推送集成
+
+### Phase 3: 闭环与优化 (Week 4-5)
+
+**目标**: 完整监控闭环，产品级体验
+
+#### Week 4-5 详细任务
+
+**Alex - 优化与集成**
+- 省电模式实现
+- 错误处理完善
+- 与Bob联调
+- 性能优化 (内存、电池)
+
+**Bob - 工作流与高级功能**
+- 一键监控工作流
+- 确认反馈机制
+- LLM分析集成
+- 场景模板
+
 ---
 
-## 7. 风险与缓解策略
+## 4. 时间线与里程碑 (更新)
 
-| 风险 | 概率 | 影响 | 缓解策略 |
+### 甘特图
+
+```
+Week:    | 1       | 2       | 3       | 4       | 5       |
+         |---------|---------|---------|---------|---------|
+Alex     ██████████
+         2.1.1-2.1.4
+                  ██████████
+                  2.2.1-2.2.4
+                            ██████████
+                            2.3.1-2.3.4
+                                      ██████████
+                                      2.4.1-2.4.3
+                                       
+David    ██████████
+         4.1.1-4.1.4
+                  ██████████
+                  4.2.1-4.2.3
+                            ██████████
+                            4.3.1-4.3.4
+                                      ██████████
+                                      4.4.1-4.4.3
+                                       
+Bob                ████████
+                   3.1.1-3.1.3
+                            ██████████
+                            3.2.1-3.2.3
+                                      ██████████
+                                      3.3.1-3.4.3
+
+Carol    ════════════════════════════════════════════════════
+         需求+测试+文档 (全程)
+
+         └── IC1 ──┘ (Week 1结束)
+                   └── IC2 ──┘ (Week 2开始)
+                             └── IC6 ──┘ (Week 3开始, AR桥接)
+                   └── IC8 ──┘ (Week 2结束, 相机协议)
+                             └── IC3 ──┘ (Week 3开始)
+                                       └── IC4 ──┘ (Week 3开始)
+                                                 └── IC7 ──┘ (Week 4开始, AR命令)
+
+Milestone:
+  M1 (Week 1): Node连接成功
+  M2 (Week 2): Camera命令可用 + Matrix猫头渲染  
+  M3 (Week 3): Vision检测+事件流 ✅ MVP
+  M4 (Week 4): AR-Vision集成完成 ✅ AR-MVP
+  M5 (Week 5): 完整产品+AR体验 ✅ Release
+```
+
+### 里程碑详情
+
+| 里程碑 | 日期 | 验收标准 | 负责人 |
+|--------|------|----------|--------|
+| **M1** | Week 1 Fri | 1. iOS显示为已连接Node<br>2. `node.describe`返回正确能力列表<br>3. 配对流程完整<br>4. **ARInterface协议定义完成 (IC0)** ✅ | Alex |
+| **M2** | Week 2 Fri | 1. `camera.snap`可用<br>2. Matrix猫头基础渲染正常<br>3. ARKit追踪+平滑旋转正常工作<br>4. **屏幕上能看到猫头** ✅ | David + Alex |
+| **M3** | Week 3 Fri | 1. 人形检测正常工作<br>2. Vision检测→AR猫头反馈通<br>3. 事件主动上报到Gateway<br>4. **核心MVP: 监控+AR集成** ✅ | Alex + David + Bob |
+| **M4** | Week 4 Fri | 1. `/lokmeye monitor start`一键启动<br>2. 用户确认反馈正常工作<br>3. 语音/手势交互完成<br>4. **完整AR体验** ✅ | 全员 |
+| **M5** | Week 5 Fri | 1. 8小时续航测试通过<br>2. 7x24稳定性测试通过<br>3. AR录制分享功能完成<br>4. **产品发布** ✅ | 全员 |
+
+---
+
+## 5. 技术风险与缓解
+
+### 5.1 高风险项
+
+| 风险 | 概率 | 影响 | 缓解措施 |
 |------|------|------|----------|
-| iOS后台限制严格 | 高 | 高 | 实施Location保活 + 后台获取 + 用户教育 |
-| OpenClaw协议变更 | 中 | 高 | 跟随OpenClaw main分支, 及时适配 |
-| WebSocket不稳定 | 中 | 中 | 实现指数退避重连 + 本地缓存 |
-| 电池消耗过快 | 高 | 高 | 动态帧率 + 智能休眠 + 功耗监控 |
-| App Store审核 | 中 | 高 | 准备隐私政策 + 权限说明 + 测试flight先行 |
-| 多设备同步复杂 | 中 | 中 | 使用OpenClaw Gateway作为单一数据源 |
+| Node协议文档不完整 | 中 | 高 | Week 1前半专注逆向OpenClaw iOS代码，验证协议 |
+| iOS后台限制严格 | 高 | 高 | 采用Location保活 + 用户教育 + 降低后台期望 |
+| WebSocket稳定性 | 中 | 中 | 实现指数退避重连 + 本地事件队列 |
+| 电池消耗过高 | 高 | 高 | 动态帧率 + 智能休眠 + Week 3专项优化 |
+| **AR性能不足** | **中** | **高** | **降级方案：简化效果/降低分辨率/关闭AR** |
+| **相机AR冲突** | **中** | **高** | **明确IC8相机协议，Hybrid模式优先级** |
+
+### 5.2 应急预案
+
+**如果Node协议过于复杂**:
+- Plan B: 复用OpenClaw iOS App源码，在其基础上添加Vision功能
+- 工作量增加: +1周
+
+**如果Vision检测性能不足**:
+- Plan B: 降低分辨率 (720p → 480p)
+- Plan C: 只做人形检测，不做运动检测
+
+**如果事件推送Gateway不支持**:
+- Plan B: 使用HTTP轮询 (iOS定期pull)
+- Plan C: 使用MQTT broker中转
+
+---
+
+## 6. 资源需求
+
+### 6.1 开发环境
+
+| 资源 | 数量 | 用途 |
+|------|------|------|
+| MacBook Pro | 3台 | iOS开发 + AR开发 + Gateway运行 |
+| iPhone (旧款) | 4-5台 | 测试设备 (iPhone X/11/12/13) |
+| **iPhone 12 Pro+ (LiDAR)** | 1-2台 | David的AR深度测试 |
+| iPad Pro (可选) | 1台 | AR大屏预览测试 |
+| OpenClaw Gateway | 1个 | Bob的开发环境 |
+| TestFlight账号 | 1个 | 内测分发 |
+| **Blender** | 1套 | David的猫头模型调整（如需要）|
+
+### 6.2 第三方服务
+
+| 服务 | 用途 | 成本 |
+|------|------|------|
+| OpenClaw | Gateway运行 | 免费 (自托管) |
+| Apple Developer | 签名 + APNs | $99/年 |
+| Tailscale (可选) | 远程访问 | 免费版足够 |
+
+---
+
+## 7. 成功指标
+
+### 7.1 技术指标
+
+| 指标 | 目标值 | 测量方法 |
+|------|--------|----------|
+| 检测延迟 | < 500ms | 从画面变化到事件上报 |
+| 误报率 | < 5% | 用户标记误报 / 总事件数 |
+| 续航时间 | > 8小时 | 连续监控电池消耗 |
+| 内存占用 | < 150MB | Xcode Instruments |
+| 连接稳定性 | > 99% | 7x24小时在线率 |
+| **AR帧率** | **> 30 FPS** | **RealityKit统计** |
+| **AR追踪精度** | **< 5cm误差** | **ARKit世界坐标比对** |
+| **AR响应延迟** | **< 200ms** | **检测到显示Matrix猫头** |
+
+### 7.2 产品指标
+
+| 指标 | 目标值 | 测量方法 |
+|------|--------|----------|
+| 配对成功率 | > 95% | 成功配对 / 尝试次数 |
+| 一键监控成功率 | > 90% | 成功启动 / 尝试次数 |
+| **AR猫头启动率** | **> 95%** | **成功显示猫头 / 启动App** |
+| **AR交互成功率** | **> 85%** | **语音/手势命令成功执行** |
+| 用户满意度 | > 4.0/5 | 内测用户评分 |
+| **"屏幕有猫头"满意度** | **> 4.5/5** | **AR视觉体验评分** |
 
 ---
 
 ## 8. 附录
 
-### 8.1 参考文档
+### 8.1 参考代码
 
-- [OpenClaw AGENTS.md](/Users/zhao/Projects/lokmeye/libs/openclaw/AGENTS.md)
-- [OpenClaw Skills文档](/Users/zhao/Projects/lokmeye/libs/openclaw/docs/tools/skills.md)
-- [OpenClaw iOS Node指南](/Users/zhao/Projects/lokmeye/libs/openclaw/apps/ios/README.md)
-- [OpenClaw Nodes工具](/Users/zhao/Projects/lokmeye/libs/openclaw/src/agents/tools/nodes-tool.ts)
+**OpenClaw参考实现**:
+- `libs/openclaw/apps/ios/Sources/Camera/CameraController.swift` - Camera实现
+- `libs/openclaw/apps/shared/OpenClawKit/Sources/OpenClawKit/GatewayNodeSession.swift` - Node协议
+- `libs/openclaw/src/agents/tools/nodes-tool.ts` - Gateway端工具
 
-### 8.2 相关项目
+### 8.2 接口文档
 
-- OpenClaw: `libs/openclaw/`
-- LokmCore: `core/` (Swift Package)
-- LokmEye iOS: `apps/LokmEye-iOS/`
+- [OpenClaw iOS Node指南](libs/openclaw/docs/platforms/ios.md)
+- [OpenClaw Pairing文档](libs/openclaw/docs/gateway/pairing.md)
+- [OpenClaw Camera文档](libs/openclaw/docs/nodes/camera.md)
 
-### 8.3 术语表
+### 8.3 变更日志
 
-- **SKILL**: OpenClaw技能单元
-- **Node**: 设备节点 (iOS App)
-- **Gateway**: OpenClaw网关
-- **APNs**: Apple Push Notification Service
-- **ROI**: Region of Interest (检测区域)
-- **VN**: Vision Framework (Apple)
+**v1.0 → v1.1**:
+- 技术架构从"复用OpenClaw iOS"改为"独立Node客户端"
+- 明确不复用OpenClaw源代码，只使用协议
+- 重新分配角色工作，明确接口契约
+- 细化Week 1-5的具体任务和依赖
+- 添加风险评估和应急预案
+
+**v1.1 → v1.2** (重大架构调整):
+- **核心理念转变**: AR不是附加功能，而是**核心UI层**（"The EYE is the Interface"）
+- Matrix猫头 = 系统主界面，用户通过AR进行所有交互
+- David（AR工程师）**Week 2进场**（前期Alex预留架构）
+- 新增**IC0架构契约**: Alex Week 1定义ARInterface协议，阻塞David进场
+- 重新设计架构图: AR层作为顶层UI，后台监控作为数据层
+- 里程碑调整: M3 MVP必须包含基础AR功能（屏幕上能看到猫头）
+- 团队入场时间明确: Alex（Week 1）→ David（Week 2）→ 全员（Week 3+）
+- 强调: 没有AR猫头 = 产品失去灵魂（乔布斯式产品定义）
 
 ---
 
 ## 9. 审批记录
 
-| 版本 | 日期 | 作者 | 审批人 | 备注 |
+| 版本 | 日期 | 作者 | 审批人 | 状态 |
 |------|------|------|--------|------|
-| 1.0 | 2026-02-27 | Claude | - | Draft版本, 待Review |
+| 1.0 | 2026-02-27 | Claude | - | Superseded |
+| 1.1 | 2026-02-27 | Claude | - | Superseded |
+| 1.2 | 2026-02-27 | Claude | - | **Draft (待Review)** |
+
 
 ---
 
-**下一步行动**:
-1. [ ] Review本计划并提出修改意见
-2. [ ] 确认人员配置和时间安排
-3. [ ] 创建GitHub Project Board跟踪进度
-4. [ ] Week 1 Kickoff会议
+## 10. 下一步行动
+
+1. **Review会议** (建议本周内)
+   - Alex, Bob, Carol 一起Review本计划
+   - 确认技术方案可行性
+   - 确认时间线是否合理
+
+2. **环境准备** (Week 0)
+   - Alex: 准备iOS开发环境，测试旧iPhone
+   - Bob: 安装配置OpenClaw Gateway
+   - Carol: 准备项目管理工具 (GitHub Projects?)
+
+3. **Week 1 Kickoff**
+   - 详细拆解Day 1-5任务
+   - 确认IC1 (Node协议) 输出格式
+   - 每日站会启动
+
+**准备好了就开始执行！**
