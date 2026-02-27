@@ -6,8 +6,10 @@
 - Build trust and technical reputation via open source
 
 ## Deliverables
-- [ ] OpenClaw Eye iOS App (MIT License)
-- [ ] OpenClaw Hub macOS app (open source)
+- [1.1] OpenClaw Eye macOS Native Demo (Swift/SwiftUI + Vision Framework)
+- [1.2] OpenClaw Hub macOS app (Swift/SwiftUI Open Source)
+
+- [ ] OpenClaw Eye iOS App (Swift codebase shared with macOS Demo)
 - [ ] 3D-printed stand STL (open source, Qi charging slot)
 
 ## Commercial Model (No Revenue)
@@ -21,24 +23,24 @@
 
 ## Roadmap
 
-### Month 0-1: Foundation
-- [ ] Create GitHub org and repos (Eye iOS, Hub macOS)
-- [ ] Define minimal protocol for "event → confirm" flow
-- [ ] Set up basic CI and README scaffolding
-- [ ] Expose LLM config UI (model/provider/base URL/API key)
-- [ ] Ensure local/LAN Ollama endpoint support from day one
+### Month 0-1: Foundation (Swift First)
+- [ ] Create GitHub org and repos (Eye & Hub monorepo or separate)
+- [ ] **Core Logic (Swift Package):**
+    - [ ] `CameraService`: AVFoundation wrapper (macOS/iOS compatible)
+    - [ ] `VisionService`: Apple Vision Framework for motion/person detection
+    - [ ] `LLMService`: Swift actor for Ollama API calls
+- [ ] OpenClaw Eye macOS Demo (CLI or simple Menu Bar App) to test above logic
 
-### Month 1-2: MVP Loop
-- [ ] iOS Eye: camera capture + local motion detection
-- [ ] macOS Hub: WebSocket server + event viewer
-- [ ] End-to-end flow: Eye detects → Hub receives → user confirms
-- [ ] LLM config persistence + validation in app settings
-- [ ] Ollama local/LAN smoke test (self-hosted model)
+### Month 1-2: MVP Loop (Cross-Platform)
+- [ ] **Port to iOS**: Reuse Core Logic package, build iOS UI
+- [ ] **macOS Hub**: WebSocket server (using NWListener or SwiftNI)
+- [ ] End-to-end flow: Eye (iOS/Mac) → Hub (Mac) → user confirms
+- [ ] Settings UI: Persistence (UserDefaults/AppStorage) for LLM configs
 
 ### Month 2-3: UX + Reliability
 - [ ] Add status UI (FPS, latency, network state)
-- [ ] Add reconnect/heartbeat for WebSocket
-- [ ] Improve false-positive handling
+- [ ] Implement "Heartbeat" & Auto-reconnect (Swift Concurrency)
+- [ ] Improve false-positive handling (Vision confidence thresholds)
 
 ### Month 3-4: 3D Stand V1
 - [ ] Design V1 stand (15° angle, Qi slot, cable routing)
