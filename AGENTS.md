@@ -1,295 +1,135 @@
-# AGENTS.md - video2log MCP Vision Server
+# AGENTS.md - video2log
 
-AI Agent 开发指南 - 本项目是 OpenClaw/nanobot 的 MCP 视觉服务器
+This file is for agentic coding tools working in this repo. Keep changes minimal, follow existing patterns, and avoid introducing new frameworks unless asked.
 
-## 项目定位
+## Project Snapshot
+- Purpose: video stream/image analysis with OpenCV detectors + LLM descriptions.
+- Entry points: `main.py` for CLI; core logic in `src/vision.py`.
+- Key config: YAML at `config/config.yaml` (env var expansion via `${VAR}`).
 
-**video2log** 现在是一个 **MCP Server**，为本地 AI Agent 提供视觉能力：
-- 多路摄像头支持（CSI/USB/HTTP）
-- 运动检测自动触发 + VLM 描述
-- 通过 MCP notification 推送告警
-- 树莓派本地部署，stdio 传输
+## Build / Run / Lint / Test
 
-## 技术栈
-
-- **协议**: MCP (Model Context Protocol)
-- **传输**: stdio（本地进程通信）
-- **视觉**: OpenCV + 640x480
-- **VLM**: OpenAI 兼容接口（SiliconFlow/Qwen2.5-VL）
-- **配置**: YAML + Pydantic
-
----
-
-## 开发命令
-
+### Environment
 ```bash
-# 安装依赖
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-
-# 运行 MCP Server（stdio 模式）
-python -m video2log.server
-
-# 测试单个 tool（使用 mcp CLI）
-mcp dev src/server.py
 ```
 
----
+### Run (local)
+```bash
+# dynamic/static mode and stream input
+python main.py --mode dynamic --stream "<stream_url>"
 
-## 架构概览
+# run once, use config defaults
+python main.py --once
 
-```
-┌─────────────────────────────────────┐
-│         OpenClaw / nanobot          │
-│           (MCP Client)              │
-└───────────┬─────────────────────────┘
-            │ MCP stdio
-            ▼
-┌─────────────────────────────────────┐
-│        video2log.server             │
-│  ┌─────────┐  ┌─────────────────┐   │
-│  │ Cameras │  │ Monitor Sessions│   │
-│  │ Manager │  │    Manager      │   │
-│  └────┬────┘  └────────┬────────┘   │
-│       │                │            │
-│       └────────────────┘            │
-│              │                      │
-│       ┌──────▼──────┐              │
-│       │   Motion    │              │
-│       │  Detector   │              │
-│       └──────┬──────┘              │
-│              │                      │
-│       ┌──────▼──────┐              │
-│       │  VLM Call   │              │
-│       └─────────────┘              │
-└─────────────────────────────────────┘
+# static mode with a local image
+python main.py --mode static --input "/path/to/image.jpg"
 ```
 
----
+### Lint / Format
+- No dedicated lint/format config found (no ruff/flake8/black/pre-commit).
+- Keep formatting consistent with existing files (PEP 8 style, 4 spaces).
+- If you add tools, update this file with exact commands.
 
-## MCP Tools
+### Tests
+- pytest is in requirements; no `tests/` directory found.
+- Default test run:
+```bash
+pytest
+```
+- Single test (path or node id):
+```bash
+pytest path/to/test_file.py::TestClass::test_name
+```
+- If you add tests, keep the above pattern and add any new commands here.
 
-### capture
-拍摄单张照片
+## Code Style Guidelines
+
+### Language and Formatting
+- Python 3; follow standard PEP 8 layout.
+- Use 4-space indentation, no tabs.
+- Keep line length reasonable (existing files are not strictly wrapped).
+- Prefer small, readable functions over long procedural blocks.
+
+### Imports
+- Order imports as: standard library, third-party, local modules.
+- Separate groups with a blank line.
+- Example (from project style):
 ```python
-async def capture(camera_id: str = "default") -> ImageContent
-```
-
-### describe
-拍摄并描述画面
-```python
-async def describe(
-    camera_id: str = "default",
-    question: str = "描述当前画面"
-) -> str
-```
-
-### start_monitoring
-开始监控（运动检测）
-```python
-async def start_monitoring(
-    camera_id: str = "default",
-    detector: Literal["motion"] = "motion",
-    sensitivity: float = 0.05,
-    auto_describe: bool = True,
-    describe_prompt: str = "描述画面中发生了什么"
-) -> str  # session_id
-```
-
-### stop_monitoring
-停止监控
-```python
-async def stop_monitoring(session_id: str) -> bool
-```
-
-### list_cameras
-列出可用摄像头
-```python
-async def list_cameras() -> List[CameraInfo]
-```
-
-### get_monitoring_status
-获取监控状态
-```python
-async def get_monitoring_status(
-    session_id: Optional[str] = None
-) -> Union[MonitoringStatus, List[MonitoringStatus]]
-```
-
----
-
-## MCP Notification
-
-### vision/alert
-运动检测触发时推送
-```python
-{
-    "session_id": str,
-    "camera_id": str,
-    "timestamp": str,
-    "trigger_type": "motion",
-    "description": Optional[str],  # VLM 描述
-    "image_base64": str
-}
-```
-
----
-
-## 代码规范
-
-### 类型标注
-必须使用类型注解
-```python
-from typing import Optional, Dict, Any, List
-from numpy.typing import NDArray
-
-def process_frame(frame: NDArray) -> Optional[Dict[str, Any]]:
-    pass
-```
-
-### 导入顺序
-```python
-# 标准库
+# stdlib
+import json
 import time
-from typing import Optional
-from dataclasses import dataclass
+from pathlib import Path
 
-# 第三方
+# third-party
 import cv2
 import numpy as np
-from mcp.server import Server
-from openai import AsyncOpenAI
 
-# 项目模块
-from .camera import CameraManager
-from .config import Config
+# local
+from .config import config
+from .logger import logger
 ```
 
-### 命名约定
-- **类**: PascalCase (`CameraManager`, `MotionDetector`)
-- **函数/变量**: snake_case (`capture_frame()`, `motion_threshold`)
-- **常量**: UPPER_SNAKE_CASE (`DEFAULT_RESOLUTION = (640, 480)`)
-- **私有**: 单下划线前缀 (`_encode_image()`)
+### Typing
+- Use type hints for public functions and dataclasses.
+- Prefer `Optional[T]` where `None` is a valid value.
+- Use `Dict[str, Any]` / `list` when structure is dynamic (LLM outputs).
+- In detectors, return `DetectionResult` consistently.
 
-### 错误处理
-捕获具体异常，返回 None 或空值，不抛出
-```python
-try:
-    frame = camera.capture()
-except cv2.error as e:
-    logger.error(f"Capture failed: {e}")
-    return None
-```
+### Naming
+- Modules: `snake_case.py`.
+- Classes: `PascalCase` (e.g., `VisionProcessor`).
+- Functions/variables: `snake_case`.
+- Constants: `UPPER_SNAKE_CASE`.
+- Private helpers: prefix `_`.
 
-### 日志
-使用 Python 标准 logging
-```python
-import logging
-logger = logging.getLogger(__name__)
+### Logging
+- Use `src/logger.py` for the project logger.
+- Use `logger.info` for lifecycle events, `logger.warning` for recoverable issues, `logger.error` for failures.
+- Avoid `print` in core modules (except CLI fallback).
 
-logger.info(f"Monitoring started: {session_id}")
-logger.warning(f"Camera disconnected: {camera_id}")
-logger.error(f"LLM call failed: {e}")
-```
+### Error Handling
+- Prefer specific exception handling around I/O or external calls (OpenCV, requests).
+- Log errors and return `None` or a safe default rather than crashing long-running loops.
+- In LLM responses, validate JSON payloads and fallback to safe detector choices.
 
----
+### Configuration
+- Use `config.get("key", default)` for settings.
+- Config supports `${ENV_VAR}` substitution; do not hardcode secrets.
+- Default paths: output in `photos/`, logs in `logs/`.
 
-## 目录结构
+### OpenCV / Image Handling
+- Frames are BGR (`cv2.imread`/`VideoCapture`).
+- Resize before LLM calls to reduce token cost.
+- When writing new detectors, support `region` with normalized coords via `normalize_region`.
 
-```
-video2log/
-├── pyproject.toml
-├── requirements.txt
-├── README.md
-├── AGENTS.md          # 本文件
-├── REWRITE_TODO.md    # 重构任务清单
-├── config/
-│   └── config.yaml    # 配置模板
-└── src/
-    ├── __init__.py
-    ├── server.py      # MCP Server 主入口
-    ├── config.py      # 配置管理（Pydantic）
-    ├── camera.py      # 摄像头管理
-    ├── llm.py         # VLM 客户端
-    ├── monitor.py     # 监控会话管理
-    └── detectors/
-        ├── __init__.py
-        ├── base.py    # 检测器基类
-        └── motion.py  # 运动检测
-```
+### Detectors
+- All detectors extend `BaseDetector`.
+- Include `[LLM_DESC]...[/LLM_DESC]` in docstring so LLM can select templates.
+- `detect()` should return `DetectionResult` with:
+  - `is_suspicious` boolean
+  - `confidence` float 0.0–1.0
+  - `description` for LLM context
+  - `metadata` for structured data
+  - `alert_reason` optional string
+- Avoid heavy state; if needed, store minimal baseline (see `BlackScreenDetector`).
 
----
+### LLM Client
+- LLM requests go through `src/llm_client.py`.
+- Validate API responses; guard against missing keys.
+- Use `requests` with timeouts and `raise_for_status()`.
 
-## 关键设计
+### File/Path Conventions
+- Use `pathlib.Path` for filesystem paths.
+- Create directories with `mkdir(parents=True, exist_ok=True)`.
 
-### 图像尺寸
-固定 **640x480**，运动检测和 VLM 都使用这个尺寸
+## Repository Conventions
+- No Cursor or Copilot instruction files found at `.cursor/rules/`, `.cursorrules`, or `.github/copilot-instructions.md`.
+- Keep README and AGENTS in sync when behavior changes.
 
-### 监控循环
-- 每 0.5 秒检查一次
-- 运动检测阈值默认 0.05
-- 告警冷却 10 秒
-
-### VLM 调用
-- MCP Server 直接调用（使用配置的 API Key）
-- OpenAI 兼容接口
-- 图像 base64 编码
-
-### 多摄像头
-每个摄像头独立，可以同时监控多个
-
----
-
-## 配置文件示例
-
-```yaml
-# config/config.yaml
-llm:
-  api_key: "${SILICONFLOW_API_KEY}"
-  model: "Qwen/Qwen2.5-VL-72B-Instruct"
-  base_url: "https://api.siliconflow.cn/v1"
-
-cameras:
-  default:
-    type: "csi"
-    source: 0
-    resolution: [640, 480]
-  
-  usb_cam:
-    type: "usb"
-    source: "/dev/video2"
-    resolution: [640, 480]
-
-monitoring:
-  motion_threshold: 0.05
-  check_interval: 0.5
-  alert_cooldown: 10
-```
-
----
-
-## OpenClaw 集成
-
-用户在 OpenClaw config 中添加：
-
-```json
-{
-  "mcpServers": {
-    "vision": {
-      "command": "python",
-      "args": ["-m", "video2log.server"],
-      "env": {
-        "VIDEO2LOG_CONFIG": "/home/pi/.config/video2log/config.yaml"
-      }
-    }
-  }
-}
-```
-
----
-
-## 注意事项
-
-1. **不要在代码中提交 API Key** - 使用配置文件或环境变量
-2. **树莓派 CSI 摄像头** - 需要 picamera2 库（Raspberry Pi OS）
-3. **性能考虑** - 640x480 在树莓派 4 上运行流畅
-4. **错误恢复** - 摄像头断开后应自动重连
+## Agent Notes
+- Do not introduce non-ASCII unless the file already uses it.
+- Avoid refactors unless requested; prefer targeted edits.
+- If adding new commands (lint/test), update this file.
